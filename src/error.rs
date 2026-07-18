@@ -47,14 +47,14 @@ pub enum Error {
     #[error("could not parse Project.toml: {source}")]
     ParseProjectToml {
         #[source]
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
 
     /// `Artifacts.toml` could not be parsed as TOML.
     #[error("could not parse Artifacts.toml: {source}")]
     ParseArtifactsToml {
         #[source]
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
 
     /// `Artifacts.toml` was parsed, but it had no entry matching this
@@ -96,6 +96,63 @@ pub enum Error {
         #[source]
         source: askama::Error,
     },
+
+    /// A version string (a JLL release version, or one component of a
+    /// compat bound) was not a plain dotted sequence of non-negative
+    /// integers, with an optional `+build` suffix.
+    #[error("{text} is not a valid version")]
+    ParseVersion { text: String },
+
+    /// The lockfile could not be parsed as TOML.
+    #[error("could not parse the lockfile at {path}: {source}")]
+    ParseLockFile {
+        path: PathBuf,
+        #[source]
+        source: Box<toml::de::Error>,
+    },
+
+    /// The lockfile model could not be serialized back to TOML. This should
+    /// never actually happen for the plain data the lockfile holds, but the
+    /// underlying library call is fallible.
+    #[error("could not serialize the lockfile: {source}")]
+    SerializeLockFile {
+        #[source]
+        source: Box<toml::ser::Error>,
+    },
+
+    /// The lockfile's `version` field is not one this build of `meson-jll`
+    /// understands. See `crate::lockfile` for what the field means.
+    #[error(
+        "the lockfile at {path} is format version {found}, but this build of meson-jll only understands version {supported}. Upgrade meson-jll to read it."
+    )]
+    UnsupportedLockFileVersion {
+        path: PathBuf,
+        found: u32,
+        supported: u32,
+    },
+
+    /// A name passed to the resolver has no published versions at all, so
+    /// it cannot be a real JLL package.
+    #[error("{name} is not a known JLL package")]
+    UnknownJllPackage { name: String },
+
+    /// A `pins` entry named a version that is not actually published for
+    /// that package.
+    #[error("{name} has no published version {pin}")]
+    UnknownPin { name: String, pin: String },
+
+    /// No available version of a package satisfies every `[compat]` bound
+    /// accumulated against it during resolution.
+    #[error("no version of {name} satisfies the compat ranges required of it")]
+    NoSatisfyingVersion { name: String },
+
+    /// The fixed-point resolver did not settle within its iteration budget.
+    /// In practice this means the required JLLs have compat ranges that
+    /// keep forcing each other to different versions pass after pass.
+    #[error(
+        "dependency resolution did not converge after {max_iterations} passes, the required JLLs may have conflicting compat ranges"
+    )]
+    ResolutionDidNotConverge { max_iterations: u32 },
 }
 
 /// A [`Result`](std::result::Result) alias using this crate's [`Error`] type.
