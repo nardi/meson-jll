@@ -41,24 +41,18 @@ pub fn resolve(name: &str) -> (String, String) {
     (ORGANIZATION.to_string(), format!("{bare}_jll.jl"))
 }
 
-/// Lists the release tags of a JLL repository, via `git ls-remote` rather
-/// than the GitHub API (see the module documentation), each paired with the
-/// commit it points at. Tag names look like `ExampleThing-v1.2.3+0`.
+/// Lists the release tags of a JLL repository, over git's own protocol
+/// rather than the GitHub API (see the module documentation), each paired
+/// with the commit it points at. Tag names look like `ExampleThing-v1.2.3+0`.
 ///
 /// A repository that does not exist at all reads as an empty list, the
 /// same outcome as a real JLL with zero releases, rather than a hard
-/// error, since a name reached only transitively that turns out
-/// unpublished should not abort a whole resolve (see
-/// [`crate::resolve::GithubCatalog::versions`]).
+/// error (see [`crate::git::ls_remote_tags`]), since a name reached only
+/// transitively that turns out unpublished should not abort a whole
+/// resolve (see [`crate::resolve::GithubCatalog::versions`]).
 pub fn list_tags(owner: &str, repo: &str) -> Result<Vec<(String, String)>> {
     let url = format!("https://github.com/{owner}/{repo}.git");
-    match git::ls_remote_tags(&url) {
-        Ok(tags) => Ok(tags),
-        Err(Error::GitFailed { stderr, .. }) if git::looks_like_missing_repository(&stderr) => {
-            Ok(Vec::new())
-        }
-        Err(other) => Err(other),
-    }
+    git::ls_remote_tags(&url)
 }
 
 /// Extracts the JLL version (for example `1.2.3+0`) from a release tag

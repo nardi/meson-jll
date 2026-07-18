@@ -161,23 +161,24 @@ pub enum Error {
     #[error("{given} is not a published JLL package name, did you mean {suggested}?")]
     WrongCase { given: String, suggested: String },
 
-    /// The system `git` binary could not even be started, for example
-    /// because it is not installed or not on `PATH`.
-    #[error("could not run git {}: {source}", args.join(" "))]
-    RunGit {
-        args: Vec<String>,
-        #[source]
-        source: std::io::Error,
-    },
-
-    /// A git command ran but exited with a failure.
-    #[error("git {} failed: {stderr}", args.join(" "))]
-    GitFailed { args: Vec<String>, stderr: String },
-
-    /// `git ls-remote` succeeded but reported no ref matching the one asked
-    /// for.
+    /// A ref advertisement request succeeded but reported no ref matching
+    /// the one asked for.
     #[error("{reference} was not found on {url}")]
     GitRefNotFound { url: String, reference: String },
+
+    /// A ref advertisement request (see `crate::git`) failed with a status
+    /// other than the "repository not found" case handled specially there.
+    #[error("could not fetch {url}: HTTP {status}: {body}")]
+    FetchRefsStatus {
+        url: String,
+        status: u16,
+        body: String,
+    },
+
+    /// A ref advertisement response could not be parsed as git's pkt-line
+    /// format.
+    #[error("could not parse the ref advertisement from {url}")]
+    ParseRefAdvertisement { url: String },
 
     /// A `pins` entry named a version that is not actually published for
     /// that package.
