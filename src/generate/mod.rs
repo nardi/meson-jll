@@ -15,6 +15,7 @@ use std::path::Path;
 use askama::Template;
 
 use crate::error::{Error, Result};
+use crate::jll::triplet::Os;
 use crate::jll::{JllPackage, ResolvedPlatform};
 use context::{
     dependency_variable, link_name_from_path, BinaryWrapContext, LibraryProductView,
@@ -36,6 +37,88 @@ pub const EMPTY_TAR_FILENAME: &str = "_meson-jll-empty.tar";
 /// The bytes of a valid, empty tar archive: two 512-byte all-zero records,
 /// which is the standard end-of-archive marker and nothing else.
 const EMPTY_TAR_BYTES: [u8; 1024] = [0u8; 1024];
+
+/// The name a Windows triplet overlay writes [`DLL_TO_LIB_SCRIPT`] under,
+/// next to its own `meson.build`.
+const DLL_TO_LIB_FILENAME: &str = "dll_to_lib.py";
+
+/// A small, generic Python script that regenerates an MSVC-compatible
+/// `.lib` from a DLL's own export table, using `dumpbin` and `lib.exe`
+/// (see the "MSVC bridging" section of `triplet_overlay.jinja`, the only
+/// place this is invoked from, at Meson build time). Both tools are part
+/// of the same MSVC installation as the compiler Meson already activated
+/// to run the build, so nothing beyond that is required.
+///
+/// This exists because Julia's Windows JLL binaries are built with
+/// MinGW-w64 GCC, whose `.dll.a` import libraries are a GNU `ar` archive
+/// format MSVC's linker cannot read at all, not merely a different naming
+/// convention. Regenerating an equivalent import library straight from the
+/// DLL's own export table sidesteps that instead of requiring a MinGW
+/// toolchain just to consume a prebuilt binary.
+const DLL_TO_LIB_SCRIPT: &str = r#"#!/usr/bin/env python3
+"""Regenerates an MSVC-compatible import library from a DLL's own export
+table, using dumpbin and lib.exe. See the meson-jll comment that generated
+this file for why this exists.
+
+Usage: dll_to_lib.py <dll-path> <output-lib-path> <machine>
+"""
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+
+def main():
+    dll_path, output_path, machine = sys.argv[1:4]
+
+    exports = subprocess.run(
+        ["dumpbin", "/exports", dll_path],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+    # Each exported symbol's line looks like:
+    #   1    0 00001080 amd_control
+    # (ordinal, hint, RVA, name), the name being the last column.
+    names = []
+    for line in exports.splitlines():
+        match = re.match(r"^\s*\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)", line)
+        if match:
+            names.append(match.group(1))
+
+    # lib.exe embeds a LIBRARY statement's name as the DLL to load at
+    # runtime. Without one, it falls back to the .def file's own base
+    # name, which is this script's randomly named temp file, not the DLL
+    # actually being wrapped, silently producing an import library that
+    # points at a DLL that does not exist.
+    dll_name = os.path.basename(dll_path)
+
+    definition_fd, definition_path = tempfile.mkstemp(suffix=".def")
+    try:
+        with os.fdopen(definition_fd, "w") as definition_file:
+            definition_file.write(f'LIBRARY "{dll_name}"\n')
+            definition_file.write("EXPORTS\n")
+            for name in names:
+                definition_file.write(f"{name}\n")
+
+        subprocess.run(
+            [
+                "lib",
+                f"/def:{definition_path}",
+                f"/out:{output_path}",
+                f"/machine:{machine}",
+            ],
+            check=True,
+        )
+    finally:
+        os.unlink(definition_path)
+
+
+if __name__ == "__main__":
+    main()
+"#;
 
 /// Writes the full wrap set for `package` into `subprojects_dir` (normally
 /// a project's `subprojects/` directory).
@@ -140,18 +223,41 @@ fn write_triplet_overlay(
         })
         .collect();
 
+    let is_windows = resolved.platform.triplet.os == Os::Windows;
+    let overlay_dir = subprojects_dir.join("packagefiles").join(&project_name);
+    if is_windows {
+        // Only meaningful alongside a Windows overlay, and harmless to
+        // regenerate unconditionally like the shared empty tar: its
+        // content never changes.
+        let script_path = overlay_dir.join(DLL_TO_LIB_FILENAME);
+        if let Some(parent) = script_path.parent() {
+            fs::create_dir_all(parent).map_err(|source| Error::CreateDirectory {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        fs::write(&script_path, DLL_TO_LIB_SCRIPT).map_err(|source| Error::WriteFile {
+            path: script_path,
+            source,
+        })?;
+    }
+
     let context = TripletOverlayContext {
         name: &project_name,
         dependency_variable: dependency_variable_name.to_string(),
         library_products,
         jll_dependencies: package.dependencies.iter().map(String::as_str).collect(),
         namespaced_include_dir: package.name.to_lowercase(),
+        is_windows,
+        msvc_machine: resolved
+            .platform
+            .triplet
+            .arch
+            .msvc_machine()
+            .unwrap_or_default(),
     };
     let rendered = render(&context, "triplet_overlay.jinja")?;
-    let path = subprojects_dir
-        .join("packagefiles")
-        .join(&project_name)
-        .join("meson.build");
+    let path = overlay_dir.join("meson.build");
     write_generated_file(&path, &rendered, force)
 }
 

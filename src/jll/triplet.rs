@@ -83,6 +83,21 @@ impl Arch {
             _ => None,
         }
     }
+
+    /// The value MSVC's `lib.exe /machine:` flag expects for this
+    /// architecture, needed only to regenerate an MSVC-compatible import
+    /// library from a MinGW-built Windows DLL (see
+    /// `crate::generate::write_triplet_overlay`). `None` for an
+    /// architecture Windows JLL builds do not actually target, since no
+    /// JLL ever needs this for one.
+    pub fn msvc_machine(self) -> Option<&'static str> {
+        match self {
+            Self::X86_64 => Some("X64"),
+            Self::I686 => Some("X86"),
+            Self::Aarch64 => Some("ARM64"),
+            Self::Armv6l | Self::Armv7l | Self::Powerpc64le | Self::Riscv64 => None,
+        }
+    }
 }
 
 /// An operating system, as named in an `Artifacts.toml` `os` field.

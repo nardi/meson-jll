@@ -138,6 +138,19 @@ pub struct TripletOverlayContext<'a> {
     /// alongside plain `include` when it exists, since nothing in a JLL's
     /// own metadata says whether it follows this convention.
     pub namespaced_include_dir: String,
+    /// Whether this platform is Windows. Julia's Windows binaries are
+    /// MinGW-w64 built, so their import libraries (`.dll.a`) cannot be
+    /// read by MSVC's linker. When set, the template regenerates an
+    /// MSVC-compatible `.lib` straight from each DLL's own export table
+    /// (see [`Self::msvc_machine`] and the sibling `dll_to_lib.py` this
+    /// overlay writes next to itself) whenever the active compiler turns
+    /// out to be MSVC and no native `.lib` already exists. Irrelevant, and
+    /// unused by the template, on every other platform.
+    pub is_windows: bool,
+    /// The value MSVC's `lib.exe /machine:` flag expects on this
+    /// architecture (see [`crate::jll::triplet::Arch::msvc_machine`]).
+    /// Only meaningful when `is_windows` is set.
+    pub msvc_machine: &'a str,
 }
 
 #[cfg(test)]

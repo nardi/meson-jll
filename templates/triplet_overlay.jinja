@@ -19,10 +19,39 @@ if fs.is_dir('include')
   endif
 endif
 
+{% if is_windows %}
+# Julia's Windows binaries are built with MinGW-w64 GCC, whose .dll.a
+# import libraries are a GNU ar archive format MSVC's linker cannot read
+# at all. When the active compiler turns out to be MSVC and a library has
+# no native .lib of its own, dll_to_lib.py (written next to this file)
+# regenerates one straight from that DLL's own export table using dumpbin
+# and lib.exe, both already on PATH as part of the same MSVC installation
+# Meson activated to find `cc` in the first place. This runs at Meson
+# build time, once per library that actually needs it, never while
+# meson-jll itself is generating this file.
+is_msvc = cc.get_id() == 'msvc'
+python3 = find_program('python3', 'python', required: false)
+dll_to_lib = files('dll_to_lib.py')
+{% endif %}
+
 # One cc.find_library() per library this platform's wrapper script
 # declares, using the exact path Julia itself records for it.
 {% for lib in library_products %}
+{% if is_windows %}
+if is_msvc and python3.found() and fs.is_file('bin/lib{{ lib.link_name }}.dll') and not fs.is_file('lib/{{ lib.link_name }}.lib')
+  {{ lib.variable }}_import_lib = custom_target(
+    '{{ lib.link_name }}-msvc-import-lib',
+    input: 'bin/lib{{ lib.link_name }}.dll',
+    output: '{{ lib.link_name }}.lib',
+    command: [python3, dll_to_lib, '@INPUT@', '@OUTPUT@', '{{ msvc_machine }}'],
+  )
+  {{ lib.variable }} = declare_dependency(link_with: {{ lib.variable }}_import_lib)
+else
+  {{ lib.variable }} = cc.find_library('{{ lib.link_name }}', dirs: meson.current_source_dir() / 'lib')
+endif
+{% else %}
 {{ lib.variable }} = cc.find_library('{{ lib.link_name }}', dirs: meson.current_source_dir() / 'lib')
+{% endif %}
 {% endfor %}
 
 # Transitive JLL dependencies, resolved the same way this package itself
