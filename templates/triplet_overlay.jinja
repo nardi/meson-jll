@@ -1,0 +1,28 @@
+project('{{ name }}', 'c')
+
+cc = meson.get_compiler('c')
+fs = import('fs')
+include_dirs = []
+if fs.is_dir('include')
+  include_dirs = [include_directories('include')]
+endif
+
+{% for lib in library_products %}
+{{ lib.variable }} = cc.find_library('{{ lib.link_name }}', dirs: meson.current_source_dir() / 'lib')
+{% endfor %}
+
+{% for dep in jll_dependencies %}
+{{ dep }}_dep = dependency('{{ dep }}')
+{% endfor %}
+
+{{ dependency_variable }} = declare_dependency(
+  include_directories: include_dirs,
+  dependencies: [
+{% for lib in library_products %}
+    {{ lib.variable }},
+{% endfor %}
+{% for dep in jll_dependencies %}
+    {{ dep }}_dep,
+{% endfor %}
+  ],
+)

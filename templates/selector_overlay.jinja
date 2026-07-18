@@ -1,0 +1,32 @@
+project('{{ name }}-jll', 'c')
+
+{% if needs_libc_probe %}
+cc = meson.get_compiler('c')
+libc = 'unknown'
+if host_machine.system() == 'linux'
+  if cc.compiles('#include <features.h>\nint main(void) { return __GLIBC__; }', name: 'glibc probe')
+    libc = 'gnu'
+  else
+    libc = 'musl'
+  endif
+endif
+{% endif %}
+{% if has_abi_options %}
+cxxstring_abi = get_option('cxxstring_abi')
+libgfortran_version = get_option('libgfortran_version')
+{% endif %}
+
+triplet = ''
+{% for platform in platforms %}
+{% if loop.first %}if {{ platform.condition }}
+{% else %}elif {{ platform.condition }}
+{% endif %}
+  triplet = '{{ platform.identifier }}'
+{% endfor %}
+else
+  error('meson-jll: unsupported platform for {{ name }}')
+endif
+
+sub = subproject('{{ name }}-' + triplet)
+{{ dependency_variable }} = sub.get_variable('{{ dependency_variable }}')
+meson.override_dependency('{{ name }}', {{ dependency_variable }})
