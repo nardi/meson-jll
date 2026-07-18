@@ -1,15 +1,18 @@
 //! Resolving a JLL package name to a repository, enumerating every JLL
-//! package that exists, and listing a JLL's versions, all through the
-//! GitHub API.
+//! package that exists, and listing a JLL's versions.
 //!
 //! Every JLL published through Yggdrasil ends up as a repository under the
-//! `JuliaBinaryWrappers` GitHub organization, named `<Name>_jll.jl`. That
-//! makes a single git ref and repository lookup enough to answer "what
-//! versions does this JLL have" and "what is this JLL's exact, correctly
-//! cased name". Enumerating every JLL that exists (for `list` and `search`)
-//! is answered from a different repository instead: `JuliaPackaging/Yggdrasil`,
-//! the monorepo of build recipes every JLL is built from. Its directory
-//! layout names every buildable package directly, in one request, which is
+//! `JuliaBinaryWrappers` GitHub organization, named `<Name>_jll.jl`.
+//! Per-package lookups (a repository's tags, the highest of them) go
+//! through git's own protocol (see [`crate::git`]) rather than the GitHub
+//! REST API, since a JLL with several dependencies makes one such lookup
+//! per dependency, and the API's 60-requests-per-hour unauthenticated rate
+//! limit does not leave much room for that. Enumerating every JLL that
+//! exists (for `list` and `search`) is answered from a different
+//! repository instead: `JuliaPackaging/Yggdrasil`, the monorepo of build
+//! recipes every JLL is built from. Its directory layout names every
+//! buildable package directly, in one request (still through the REST API,
+//! but one shared, cached request rather than one per package), which is
 //! far cheaper than paginating the `JuliaBinaryWrappers` organization's
 //! entire repository listing (roughly 700 repositories, split across many
 //! pages) just to read off names.
@@ -20,7 +23,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::git;
 use crate::source::fetch_url;
+use crate::version::Version;
 
 /// The GitHub organization every JLL package is published under.
 const ORGANIZATION: &str = "JuliaBinaryWrappers";
@@ -36,19 +41,24 @@ pub fn resolve(name: &str) -> (String, String) {
     (ORGANIZATION.to_string(), format!("{bare}_jll.jl"))
 }
 
-#[derive(Debug, Deserialize)]
-struct TagResponse {
-    name: String,
-}
-
-/// Lists the release tags of a JLL repository, most recent first, as
-/// reported by the GitHub API. Tag names look like `ExampleThing-v1.2.3+0`.
+/// Lists the release tags of a JLL repository, via `git ls-remote` rather
+/// than the GitHub API (see the module documentation). Tag names look like
+/// `ExampleThing-v1.2.3+0`.
+///
+/// A repository that does not exist at all reads as an empty list, the
+/// same outcome as a real JLL with zero releases, rather than a hard
+/// error, since a name reached only transitively that turns out
+/// unpublished should not abort a whole resolve (see
+/// [`crate::resolve::GithubCatalog::versions`]).
 pub fn list_tags(owner: &str, repo: &str) -> Result<Vec<String>> {
-    let url = format!("https://api.github.com/repos/{owner}/{repo}/tags?per_page=100");
-    let body = fetch_url(&url)?;
-    let tags: Vec<TagResponse> =
-        serde_json::from_str(&body).map_err(|source| Error::ParseJson { url, source })?;
-    Ok(tags.into_iter().map(|tag| tag.name).collect())
+    let url = format!("https://github.com/{owner}/{repo}.git");
+    match git::ls_remote_tags(&url) {
+        Ok(tags) => Ok(tags),
+        Err(Error::GitFailed { stderr, .. }) if git::looks_like_missing_repository(&stderr) => {
+            Ok(Vec::new())
+        }
+        Err(other) => Err(other),
+    }
 }
 
 /// Extracts the JLL version (for example `1.2.3+0`) from a release tag
@@ -57,82 +67,51 @@ pub fn version_from_tag(tag: &str) -> Option<&str> {
     tag.rsplit_once("-v").map(|(_, version)| version)
 }
 
-#[derive(Debug, Deserialize)]
-struct ReleaseResponse {
-    tag_name: String,
-}
-
-/// The most recently published version of a JLL package.
-///
-/// Reads GitHub's own "latest release" endpoint, which the API defines as
-/// the most recently created non-prerelease, non-draft release, rather than
-/// listing every tag and taking the first: one small request for one
-/// release instead of a full (up to 100-tag) page just to read off its
-/// first entry.
+/// The most recently published version of a JLL package: the highest
+/// version among its tags, compared the same way [`crate::resolve`]
+/// compares every other version, rather than relying on tag order.
 pub fn latest_version(owner: &str, repo: &str) -> Result<String> {
-    let url = format!("https://api.github.com/repos/{owner}/{repo}/releases/latest");
-    let body = fetch_url(&url).map_err(|error| match error {
-        Error::Fetch { source, .. } if matches!(source.as_ref(), ureq::Error::Status(404, _)) => {
-            Error::NoPlatforms {
-                name: repo.to_string(),
-            }
-        }
-        other => other,
-    })?;
-    let response: ReleaseResponse =
-        serde_json::from_str(&body).map_err(|source| Error::ParseJson { url, source })?;
-    version_from_tag(&response.tag_name)
-        .map(String::from)
+    let tags = list_tags(owner, repo)?;
+    tags.iter()
+        .filter_map(|tag| version_from_tag(tag))
+        .filter_map(|raw| Version::parse(raw).ok().map(|version| (raw, version)))
+        .max_by(|left, right| left.1.cmp(&right.1))
+        .map(|(raw, _)| raw.to_string())
         .ok_or_else(|| Error::NoPlatforms {
             name: repo.to_string(),
         })
 }
 
-#[derive(Debug, Deserialize)]
-struct RepoResponse {
-    name: String,
-}
-
-/// Looks up `name`'s exact, correctly cased bare name from the
-/// `JuliaBinaryWrappers` organization, and confirms a repository actually
-/// exists for it.
+/// Looks up `name`'s exact, correctly cased bare name, and confirms it is
+/// one of the packages Yggdrasil can build (see [`yggdrasil_package_names`]).
 ///
-/// GitHub's REST API matches a repository path case-insensitively, so this
-/// succeeds no matter which case `name` was typed in, but the result is
-/// only returned as-is when it matches the case actually requested.
-/// Otherwise this returns [`Error::WrongCase`] with the real name as a
-/// suggestion, rather than silently continuing under a different name than
-/// the one the caller asked for: JLL names are case-sensitive everywhere
-/// else (a generated `dependency()` name, a lockfile key, a raw content
-/// URL), so a mismatch here is far more likely to be a typo than an
-/// intentional choice.
+/// The comparison is case-insensitive, so this succeeds no matter which
+/// case `name` was typed in, but the result is only returned as-is when it
+/// matches the case actually requested. Otherwise this returns
+/// [`Error::WrongCase`] with the real name as a suggestion, rather than
+/// silently continuing under a different name than the one the caller
+/// asked for: JLL names are case-sensitive everywhere else (a generated
+/// `dependency()` name, a lockfile key, a raw content URL), so a mismatch
+/// here is far more likely to be a typo than an intentional choice.
 ///
-/// Returns [`Error::UnknownJllPackage`] if no such repository exists at
-/// all, case included.
+/// Returns [`Error::UnknownJllPackage`] if no such package exists at all,
+/// case included.
 pub fn canonical_bare_name(name: &str) -> Result<String> {
     let requested_bare = name.strip_suffix("_jll").unwrap_or(name);
-    let (owner, repo) = resolve(name);
-    let url = format!("https://api.github.com/repos/{owner}/{repo}");
-    let body = fetch_url(&url).map_err(|error| match error {
-        Error::Fetch { source, .. } if matches!(source.as_ref(), ureq::Error::Status(404, _)) => {
-            Error::UnknownJllPackage {
-                name: requested_bare.to_string(),
-            }
-        }
-        other => other,
-    })?;
-    let response: RepoResponse =
-        serde_json::from_str(&body).map_err(|source| Error::ParseJson { url, source })?;
-    let actual_bare = response
-        .name
-        .strip_suffix("_jll.jl")
-        .unwrap_or(&response.name);
+    let requested_lower = requested_bare.to_lowercase();
+    let names = yggdrasil_package_names()?;
+    let actual_bare = names
+        .into_iter()
+        .find(|candidate| candidate.to_lowercase() == requested_lower)
+        .ok_or_else(|| Error::UnknownJllPackage {
+            name: requested_bare.to_string(),
+        })?;
     if actual_bare == requested_bare {
-        Ok(actual_bare.to_string())
+        Ok(actual_bare)
     } else {
         Err(Error::WrongCase {
             given: requested_bare.to_string(),
-            suggested: actual_bare.to_string(),
+            suggested: actual_bare,
         })
     }
 }
@@ -200,10 +179,11 @@ struct CachedPackageList {
 ///
 /// A name found this way is a buildable recipe, not a guarantee that
 /// `JuliaBinaryWrappers/<Name>_jll.jl` was ever successfully published (a
-/// recipe can exist without having built successfully). [`crate::install`]
-/// independently confirms the real repository exists through
-/// [`canonical_bare_name`], and reports [`Error::UnknownJllPackage`] clearly
-/// if a name from here turns out not to have a published repository.
+/// recipe can exist without having built successfully). [`canonical_bare_name`]
+/// only checks against this same list, so it cannot catch that case either,
+/// but [`crate::resolve::resolve`] still does: a required package with no
+/// tags at all (see [`list_tags`]) fails with [`Error::UnknownJllPackage`]
+/// there, just later in the pipeline than a case mismatch would.
 ///
 /// The result is cached locally, keyed by Yggdrasil's current `master`
 /// commit, so a repeat call in an unchanged Yggdrasil costs one small

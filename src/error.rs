@@ -142,6 +142,19 @@ pub enum Error {
     #[error("{given} is not a published JLL package name, did you mean {suggested}?")]
     WrongCase { given: String, suggested: String },
 
+    /// The system `git` binary could not even be started, for example
+    /// because it is not installed or not on `PATH`.
+    #[error("could not run git {}: {source}", args.join(" "))]
+    RunGit {
+        args: Vec<String>,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// A git command ran but exited with a failure.
+    #[error("git {} failed: {stderr}", args.join(" "))]
+    GitFailed { args: Vec<String>, stderr: String },
+
     /// A `pins` entry named a version that is not actually published for
     /// that package.
     #[error("{name} has no published version {pin}")]

@@ -4,6 +4,7 @@
 
 pub mod error;
 pub mod generate;
+mod git;
 pub mod install;
 pub mod jll;
 pub mod lock;

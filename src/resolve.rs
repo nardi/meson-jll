@@ -95,21 +95,10 @@ pub struct GithubCatalog;
 impl Catalog for GithubCatalog {
     fn versions(&self, package: &str) -> Result<Vec<(String, Version)>> {
         let (owner, repo) = registry::resolve(package);
-        let tags = match registry::list_tags(&owner, &repo) {
-            Ok(tags) => tags,
-            // A repository that does not exist at all reads as "no
-            // versions", the same outcome as a real JLL with zero
-            // releases, rather than a hard error here. Any other failure
-            // (a network error, a malformed response) still propagates,
-            // since silently treating those as "not a real package" would
-            // hide real problems instead of surfacing them.
-            Err(Error::Fetch { source, .. })
-                if matches!(source.as_ref(), ureq::Error::Status(404, _)) =>
-            {
-                return Ok(Vec::new());
-            }
-            Err(source) => return Err(source),
-        };
+        // A repository that does not exist at all already reads as "no
+        // versions" from `list_tags` itself, the same outcome as a real
+        // JLL with zero releases, rather than a hard error here.
+        let tags = registry::list_tags(&owner, &repo)?;
         Ok(tags
             .iter()
             .filter_map(|tag| registry::version_from_tag(tag))
