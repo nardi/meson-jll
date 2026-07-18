@@ -1,101 +1,111 @@
 # `meson-jll`
 
-Julia's ecosystem ships precompiled C, C++, and Fortran binaries as JLL
-packages, for example [`SuiteSparse_jll.jl`][suitesparse]. Each JLL is a
-GitHub repository under `JuliaBinaryWrappers` that fully describes, for every
-platform it supports, the binary tarball to download, the libraries inside
-it, and any other JLLs it depends on.
+Julia's ecosystem ships precompiled C, C++, and Fortran binaries for many
+scientific software packages as JLL packages, for example
+[`SuiteSparse_jll.jl`][suitesparse]. Each JLL is a GitHub repository under
+[`JuliaBinaryWrappers`][julia-binary-wrappers] that fully describes, for
+every platform it supports, the binary tarball to download, the libraries
+inside it, and any other JLLs it depends on.
 
-Meson's [wrap dependency system][wrap] is the standard way to pull an
-external dependency into a Meson project as a subproject, so that a plain
-`dependency('Foo')` call resolves automatically.
+The [Meson][meson] build system's [wrap dependency system][wrap] is the
+standard way to pull an external dependency into a Meson project as a
+subproject, so that a plain `dependency('Foo')` call resolves automatically.
 
 `meson-jll` bridges the two. It reads a JLL's metadata and writes a set of
 Meson wrap files so that any Meson project can consume Julia-built binaries
 with a normal `dependency()` call, on any platform the JLL supports, without
-downloading or rebuilding anything by hand.
+downloading or rebuilding anything by hand. This makes the large collection
+of JLL binaries easily usable by projects in any language that the Meson
+build system supports, which includes C, C++, C#, D, Fortran, Java, Python
+and Rust.
 
+For worked examples of using a JLL from a real project, see the
+[examples](crate::examples) page. For an explanation of what the generated
+files are and how they are produced, see the [internals](crate::internals)
+page.
+
+[julia-binary-wrappers]: https://github.com/orgs/JuliaBinaryWrappers/repositories
+[meson]: https://mesonbuild.com
 [suitesparse]: https://github.com/JuliaBinaryWrappers/SuiteSparse_jll.jl
 [wrap]: https://mesonbuild.com/Wrap-dependency-system-manual.html
 
-## Installing a dependency
+## Getting started
 
-```text
+Generate a wrap set for a JLL, then use it like any other Meson dependency:
+
+```bash
 meson-jll install SuiteSparse
 ```
-
-This writes a wrap set into `subprojects/`, including every JLL package
-`SuiteSparse_jll` depends on. Afterwards, a consuming `meson.build` needs
-nothing more than:
-
 ```meson
 suitesparse = dependency('SuiteSparse')
 executable('demo', 'demo.c', dependencies: suitesparse)
 ```
 
 `meson setup` then downloads only the one tarball that matches the machine
-it runs on, no matter how many platforms the JLL supports.
+it runs on, no matter how many platforms the JLL supports. The
+[examples](crate::examples) page walks through this end to end.
 
-## Command overview
+## Commands
 
 The command line mirrors Meson's own `meson wrap`, so the mental model
-carries over directly for anyone who has used it before:
+carries over directly for anyone who has used it before.
 
-- `meson-jll list` lists every JLL package published under
-  `JuliaBinaryWrappers`.
-- `meson-jll search <term>` searches that list by name.
-- `meson-jll install <name> [<version>]` writes a JLL's wrap set into
-  `subprojects/`. A specific JLL release can be pinned by version, and
-  `--url` reads the package's metadata from somewhere other than the
-  `JuliaBinaryWrappers` organisation, for example a private fork.
-- `meson-jll info <name>` lists a JLL's available release versions.
-- `meson-jll status` lists the JLL wraps already installed in the current
-  project and whether newer versions are available.
-- `meson-jll update [<name>]` regenerates an installed JLL's wrap set to its
-  latest version, or every installed JLL when no name is given.
+### `list` and `search`
 
-## How the generated wraps work
+`list` prints every JLL package published under `JuliaBinaryWrappers`, and
+`search` filters that list by name:
 
-A `.wrap` file's `[wrap-file]` section only accepts a single
-`source_url`, but a JLL publishes one tarball per platform. `meson-jll`
-resolves this by writing a small tree of wraps instead of one:
-
-- A **selector wrap** (`SuiteSparse.wrap`) declares the public dependency
-  name through `[provide]`, but carries no source archive of its own. Its
-  overlay `meson.build` maps Meson's `host_machine` to the matching
-  platform and calls `subproject()` on that platform's own wrap.
-- One **binary wrap** per supported platform (for example
-  `SuiteSparse-x86_64-linux-gnu.wrap`), each a completely ordinary wrap
-  pointing at that platform's tarball. Its overlay turns the extracted files
-  into a `declare_dependency()`, using the exact library paths the JLL
-  itself declares.
-
-Because Meson only ever fetches a subproject once something actually
-references it, only the platform matching the machine running `meson setup`
-is ever downloaded. The rest of the wrap set sits untouched in
-`subprojects/`, portable across every machine it was generated for.
-
-## A look at the underlying data model
-
-The library crate this binary is built on exposes the pieces above as plain
-Rust types, most notably [`meson_jll::jll::triplet::Triplet`], which turns a
-JLL's platform selectors into the identifier used to name generated files:
-
-```rust
-use meson_jll::jll::triplet::{Arch, Libc, Os, Triplet};
-
-let triplet = Triplet {
-    arch: Arch::X86_64,
-    os: Os::Linux,
-    libc: Some(Libc::Glibc),
-    call_abi: None,
-    cxxstring_abi: None,
-    libgfortran_version: None,
-};
-
-assert_eq!(triplet.identifier(), "x86_64-linux-gnu");
+```console
+$ meson-jll search suitesparse
+SuiteSparse
 ```
 
-See the module documentation in the sidebar for the rest of the API:
-parsing (`jll`), fetching (`source`, `registry`), and rendering
-(`generate`).
+### `install`
+
+`install <name> [<version>]` writes a JLL's wrap set into `subprojects/`,
+including a wrap for every JLL it depends on. It prints each package it
+wrote, with the version it resolved:
+
+```console
+$ meson-jll install SuiteSparse
+installed SuiteSparse 7.12.1+0
+installed libblastrampoline 5.11.2+2
+```
+
+A trailing version pins a specific JLL release instead of the latest one.
+The `--url` option reads the package's metadata from somewhere other than
+the `JuliaBinaryWrappers` organisation, for example a private fork, and
+`--force` overwrites wrap files that already exist.
+
+### `info`
+
+`info <name>` lists the release versions available for a JLL, newest first:
+
+```console
+$ meson-jll info SuiteSparse
+7.12.1+0
+7.11.0+0
+7.10.1+0
+...
+```
+
+### `status`
+
+`status` lists the JLL wraps already installed in the current project and
+whether a newer version exists:
+
+```console
+$ meson-jll status
+SuiteSparse 7.12.1+0 (up to date)
+libblastrampoline 5.11.2+2 (latest: 5.12.0+0)
+```
+
+### `update`
+
+`update [<name>]` regenerates an installed JLL's wrap set at its latest
+version, or every installed JLL when no name is given:
+
+```console
+$ meson-jll update SuiteSparse
+updated SuiteSparse to 7.13.0+0
+```

@@ -35,7 +35,7 @@ pub struct SelectorWrapContext<'a> {
     /// The JLL release version this wrap was generated from. Recorded in a
     /// marker comment so that later `status` and `update` runs can see what
     /// is installed without re-fetching anything. See
-    /// [`crate::status`](crate::status).
+    /// [`crate::status`].
     pub version: &'a str,
     /// The name of the shared placeholder archive this wrap points its
     /// mandatory `source_filename` at. See
