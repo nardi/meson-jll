@@ -10,7 +10,9 @@
 //! dependency for a tool that writes Meson wrap files (Meson's own wrap
 //! system shells out to `git` for VCS subprojects).
 
+use std::collections::HashMap;
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
 use crate::error::{Error, Result};
 
@@ -23,6 +25,13 @@ use crate::error::{Error, Result};
 /// with a failure becomes [`Error::GitFailed`], carrying its stderr so the
 /// underlying reason (a missing repository, a network failure) is still
 /// visible to the caller.
+///
+/// Each call is its own `git` process and its own HTTPS connection, so the
+/// connection and TLS handshake (measured at a flat 500-600ms against
+/// GitHub, regardless of what is actually being asked for) dominates the
+/// cost of every call. This is why callers that might plausibly ask the
+/// same question twice in one run, like [`ls_remote_sha`], memoize rather
+/// than calling through here again.
 fn run(args: &[&str]) -> Result<String> {
     let output = Command::new("git")
         .args(args)
@@ -82,12 +91,40 @@ pub fn looks_like_missing_repository(stderr: &str) -> bool {
 /// commit always has the same file contents, so caching by commit rather
 /// than by ref name still gets a fresh answer if a branch (unlike a tag)
 /// later moves to point somewhere else.
+///
+/// Memoized for the lifetime of the process: the same `(url, reference)` is
+/// genuinely asked for twice in one run in practice (once resolving a
+/// package's version, once regenerating its wrap set from the resolved
+/// version), and since each call is its own ~500ms round trip (see [`run`]),
+/// skipping a repeat one is worth a small in-memory cache even though the
+/// answer is not persisted past this run, unlike the on-disk archive cache
+/// this feeds into.
 pub fn ls_remote_sha(url: &str, reference: &str) -> Result<String> {
+    let key = (url.to_string(), reference.to_string());
+    if let Some(sha) = lock_sha_cache().get(&key) {
+        return Ok(sha.clone());
+    }
+
     let output = run(&["ls-remote", url, reference])?;
-    parse_ref_sha(&output).ok_or_else(|| Error::GitRefNotFound {
+    let sha = parse_ref_sha(&output).ok_or_else(|| Error::GitRefNotFound {
         url: url.to_string(),
         reference: reference.to_string(),
-    })
+    })?;
+
+    lock_sha_cache().insert(key, sha.clone());
+    Ok(sha)
+}
+
+/// Locks the process-lifetime memo table [`ls_remote_sha`] reads and writes.
+/// A poisoned lock (a previous holder panicked mid-update) is recovered
+/// rather than propagated, since losing this cache costs at most a repeat
+/// `git` call, never incorrect data.
+fn lock_sha_cache() -> std::sync::MutexGuard<'static, HashMap<(String, String), String>> {
+    static CACHE: OnceLock<Mutex<HashMap<(String, String), String>>> = OnceLock::new();
+    CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Picks the commit SHA out of `git ls-remote`'s output for a single ref.
