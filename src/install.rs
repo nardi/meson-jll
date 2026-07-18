@@ -46,7 +46,14 @@ pub fn install(
     subprojects_dir: &Path,
     force: bool,
 ) -> Result<Vec<(String, String)>> {
-    let bare_name = name.strip_suffix("_jll").unwrap_or(name).to_string();
+    let bare_name = if custom_url.is_some() {
+        // A custom URL is not necessarily hosted under `JuliaBinaryWrappers`,
+        // so its authoritative name comes from its own fetched
+        // `Project.toml` further down instead of a registry lookup here.
+        name.strip_suffix("_jll").unwrap_or(name).to_string()
+    } else {
+        registry::canonical_bare_name(name)?
+    };
     let lock_path = subprojects_dir.join(LOCK_FILE_NAME);
     let mut lock = LockFile::read(&lock_path)?;
 

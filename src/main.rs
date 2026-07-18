@@ -108,8 +108,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn run_list() -> anyhow::Result<()> {
-    let mut names = registry::list_jll_packages()?;
-    names.sort();
+    let names = registry::list_jll_packages()?;
     for name in names {
         println!("{name}");
     }
@@ -117,8 +116,7 @@ fn run_list() -> anyhow::Result<()> {
 }
 
 fn run_search(term: &str) -> anyhow::Result<()> {
-    let mut names = registry::search_jll_packages(term)?;
-    names.sort();
+    let names = registry::search_jll_packages(term)?;
     for name in names {
         println!("{name}");
     }
@@ -146,6 +144,7 @@ fn run_install(
 }
 
 fn run_info(name: &str) -> anyhow::Result<()> {
+    registry::canonical_bare_name(name)?;
     let (owner, repo) = registry::resolve(name);
     let tags = registry::list_tags(&owner, &repo)?;
     for tag in tags {

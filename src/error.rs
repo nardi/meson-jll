@@ -136,6 +136,12 @@ pub enum Error {
     #[error("{name} is not a known JLL package")]
     UnknownJllPackage { name: String },
 
+    /// A name resolves to a real JLL repository only once case is ignored.
+    /// JLL names are case-sensitive everywhere except this one lookup, so
+    /// the mismatch is reported rather than silently corrected.
+    #[error("{given} is not a published JLL package name, did you mean {suggested}?")]
+    WrongCase { given: String, suggested: String },
+
     /// A `pins` entry named a version that is not actually published for
     /// that package.
     #[error("{name} has no published version {pin}")]
