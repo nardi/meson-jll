@@ -1,6 +1,6 @@
 //! Generate Meson wraps from Julia JLL packages.
 //!
-#![doc = include_str!("../guide.md")]
+#![doc = include_str!("../docs/index.md")]
 
 pub mod error;
 pub mod generate;

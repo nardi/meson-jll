@@ -1,7 +1,7 @@
 # `meson-jll`
 
 Julia's ecosystem ships precompiled C, C++, and Fortran binaries for many
-scientific software packages as JLL packages, for example
+scientific software packages as [JLL packages][jll], for example
 [`SuiteSparse_jll.jl`][suitesparse]. Each JLL is a GitHub repository under
 [`JuliaBinaryWrappers`][julia-binary-wrappers] that fully describes, for
 every platform it supports, the binary tarball to download, the libraries
@@ -24,6 +24,7 @@ For worked examples of using a JLL from a real project, see the
 files are and how they are produced, see the [internals](crate::internals)
 page.
 
+[jll]: https://docs.binarybuilder.org/stable/jll/
 [julia-binary-wrappers]: https://github.com/orgs/JuliaBinaryWrappers/repositories
 [meson]: https://mesonbuild.com
 [suitesparse]: https://github.com/JuliaBinaryWrappers/SuiteSparse_jll.jl
@@ -33,10 +34,11 @@ page.
 
 Generate a wrap set for a JLL, then use it like any other Meson dependency:
 
-```bash
-meson-jll install SuiteSparse
+```shell
+$ meson-jll install SuiteSparse
 ```
-```meson
+```python
+# meson.build
 suitesparse = dependency('SuiteSparse')
 executable('demo', 'demo.c', dependencies: suitesparse)
 ```
@@ -55,7 +57,7 @@ carries over directly for anyone who has used it before.
 `list` prints every JLL package published under `JuliaBinaryWrappers`, and
 `search` filters that list by name:
 
-```console
+```shell
 $ meson-jll search suitesparse
 SuiteSparse
 ```
@@ -66,7 +68,7 @@ SuiteSparse
 including a wrap for every JLL it depends on. It prints each package it
 wrote, with the version it resolved:
 
-```console
+```shell
 $ meson-jll install SuiteSparse
 installed SuiteSparse 7.12.1+0
 installed libblastrampoline 5.11.2+2
@@ -74,14 +76,14 @@ installed libblastrampoline 5.11.2+2
 
 A trailing version pins a specific JLL release instead of the latest one.
 The `--url` option reads the package's metadata from somewhere other than
-the `JuliaBinaryWrappers` organisation, for example a private fork, and
+the `JuliaBinaryWrappers` organization, for example a private fork, and
 `--force` overwrites wrap files that already exist.
 
 ### `info`
 
 `info <name>` lists the release versions available for a JLL, newest first:
 
-```console
+```shell
 $ meson-jll info SuiteSparse
 7.12.1+0
 7.11.0+0
@@ -94,7 +96,7 @@ $ meson-jll info SuiteSparse
 `status` lists the JLL wraps already installed in the current project and
 whether a newer version exists:
 
-```console
+```shell
 $ meson-jll status
 SuiteSparse 7.12.1+0 (up to date)
 libblastrampoline 5.11.2+2 (latest: 5.12.0+0)
@@ -105,7 +107,16 @@ libblastrampoline 5.11.2+2 (latest: 5.12.0+0)
 `update [<name>]` regenerates an installed JLL's wrap set at its latest
 version, or every installed JLL when no name is given:
 
-```console
+```shell
 $ meson-jll update SuiteSparse
 updated SuiteSparse to 7.13.0+0
 ```
+
+## Where to next
+
+- [Examples](crate::examples): a worked C program and a meson-python
+  extension module, both consuming a JLL end to end.
+- [Internals](crate::internals): how the generated wrap set is shaped, the
+  three-step generation process, and how versions are resolved.
+- [Lockfile format](crate::lockfile): the formal specification of
+  `subprojects/meson-jll.lock`.
