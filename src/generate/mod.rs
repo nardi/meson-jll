@@ -22,6 +22,21 @@ use context::{
     TripletOverlayContext,
 };
 
+/// The name of the placeholder archive every selector wrap's
+/// `source_filename` points at.
+///
+/// Meson requires a `[wrap-file]` section to declare a source, even one
+/// that only exists to load a `patch_directory` overlay and never actually
+/// builds anything from its own source tree. Rather than downloading a real
+/// (and pointless) archive for every package, every selector wrap shares one
+/// local, empty tar file, placed directly under `subprojects/packagefiles/`
+/// the same way any other locally supplied wrap source would be.
+pub const EMPTY_TAR_FILENAME: &str = "_meson-jll-empty.tar";
+
+/// The bytes of a valid, empty tar archive: two 512-byte all-zero records,
+/// which is the standard end-of-archive marker and nothing else.
+const EMPTY_TAR_BYTES: [u8; 1024] = [0u8; 1024];
+
 /// Writes the full wrap set for `package` into `subprojects_dir` (normally
 /// a project's `subprojects/` directory).
 ///
@@ -30,6 +45,7 @@ use context::{
 pub fn write_wrap_set(package: &JllPackage, subprojects_dir: &Path, force: bool) -> Result<()> {
     let dependency_variable_name = dependency_variable(&package.name);
 
+    write_empty_tar(subprojects_dir)?;
     write_selector_wrap(package, subprojects_dir, force)?;
     write_selector_overlay(package, &dependency_variable_name, subprojects_dir, force)?;
     write_options(package, subprojects_dir, force)?;
@@ -48,10 +64,31 @@ pub fn write_wrap_set(package: &JllPackage, subprojects_dir: &Path, force: bool)
     Ok(())
 }
 
+/// Writes the shared empty tar archive, if it is not already there.
+///
+/// Its bytes never change, so unlike the rest of the generated files this
+/// is always safe to leave in place rather than gating it on `force`.
+fn write_empty_tar(subprojects_dir: &Path) -> Result<()> {
+    let path = subprojects_dir
+        .join("packagefiles")
+        .join(EMPTY_TAR_FILENAME);
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| Error::CreateDirectory {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    fs::write(&path, EMPTY_TAR_BYTES).map_err(|source| Error::WriteFile { path, source })
+}
+
 fn write_selector_wrap(package: &JllPackage, subprojects_dir: &Path, force: bool) -> Result<()> {
     let context = SelectorWrapContext {
         name: &package.name,
         version: &package.version,
+        empty_tar_filename: EMPTY_TAR_FILENAME,
     };
     let rendered = render(&context, "selector_wrap.jinja")?;
     let path = subprojects_dir.join(format!("{}.wrap", package.name));

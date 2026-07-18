@@ -1,6 +1,9 @@
 {% if has_cxxstring_abi %}
+# This package splits at least one platform by C++ standard library ABI.
+# The selector overlay reads this option to pick the matching triplet.
 option('cxxstring_abi', type: 'combo', choices: [{{ cxxstring_choices }}], value: '{{ cxxstring_default }}')
 {% endif %}
 {% if has_libgfortran %}
+# Same idea, for platforms split by Fortran runtime version instead.
 option('libgfortran_version', type: 'combo', choices: [{{ libgfortran_choices }}], value: '{{ libgfortran_default }}')
 {% endif %}

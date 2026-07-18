@@ -1,16 +1,23 @@
 project('{{ name }}', 'c')
 
 cc = meson.get_compiler('c')
+# The tarball is never downloaded ahead of time, so whether it ships headers
+# is unknown until Meson has actually extracted it. Checking here, after
+# extraction, avoids guessing in the generator.
 fs = import('fs')
 include_dirs = []
 if fs.is_dir('include')
   include_dirs = [include_directories('include')]
 endif
 
+# One cc.find_library() per library this platform's wrapper script
+# declares, using the exact path Julia itself records for it.
 {% for lib in library_products %}
 {{ lib.variable }} = cc.find_library('{{ lib.link_name }}', dirs: meson.current_source_dir() / 'lib')
 {% endfor %}
 
+# Transitive JLL dependencies, resolved the same way this package itself
+# is: through their own selector wrap's [provide] fallback.
 {% for dep in jll_dependencies %}
 {{ dep }}_dep = dependency('{{ dep }}')
 {% endfor %}

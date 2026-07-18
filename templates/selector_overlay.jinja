@@ -1,6 +1,8 @@
 project('{{ name }}-jll', 'c')
 
 {% if needs_libc_probe %}
+# host_machine has no libc() getter, so tell glibc and musl apart by
+# compiling a snippet that only glibc defines the macro for.
 cc = meson.get_compiler('c')
 libc = 'unknown'
 if host_machine.system() == 'linux'
@@ -12,10 +14,14 @@ if host_machine.system() == 'linux'
 endif
 {% endif %}
 {% if has_abi_options %}
+# Declared in the sibling meson.options this package generated.
 cxxstring_abi = get_option('cxxstring_abi')
 libgfortran_version = get_option('libgfortran_version')
 {% endif %}
 
+# Which per-platform subproject matches this machine. Each branch condition
+# was fully precomputed in Rust, so this is a plain if-elif chain with one
+# entry per platform the JLL publishes a tarball for.
 triplet = ''
 {% for platform in platforms %}
 {% if loop.first %}if {{ platform.condition }}
@@ -27,6 +33,8 @@ else
   error('meson-jll: unsupported platform for {{ name }}')
 endif
 
+# Meson only fetches a subproject once something references it, so only
+# the tarball for the matching triplet is ever downloaded.
 sub = subproject('{{ name }}-' + triplet)
 {{ dependency_variable }} = sub.get_variable('{{ dependency_variable }}')
 meson.override_dependency('{{ name }}', {{ dependency_variable }})

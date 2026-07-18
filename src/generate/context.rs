@@ -8,14 +8,15 @@
 use askama::Template;
 
 /// Turns a JLL package name into the Meson variable name its dependency
-/// object is bound to, for example `SuiteSparse` becomes `suitesparse_dep`.
+/// object is bound to, for example `ExampleThing` becomes
+/// `examplething_dep`.
 pub fn dependency_variable(name: &str) -> String {
     format!("{}_dep", name.to_lowercase())
 }
 
 /// Derives the plain library name Meson's `cc.find_library()` expects (for
-/// example `amd`) from a JLL library path such as `lib/libamd.so` or
-/// `bin/libamd.dll`.
+/// example `example`) from a JLL library path such as `lib/libexample.so`
+/// or `bin/libexample.dll`.
 pub fn link_name_from_path(path: &str) -> String {
     let file_name = path.rsplit('/').next().unwrap_or(path);
     let before_first_dot = file_name.split('.').next().unwrap_or(file_name);
@@ -25,7 +26,7 @@ pub fn link_name_from_path(path: &str) -> String {
         .to_string()
 }
 
-/// Renders `SuiteSparse.wrap`, the overlay-only selector wrap.
+/// Renders the overlay-only selector wrap, for example `ExampleThing.wrap`.
 #[derive(Template)]
 #[template(path = "selector_wrap.jinja", escape = "none")]
 pub struct SelectorWrapContext<'a> {
@@ -36,9 +37,13 @@ pub struct SelectorWrapContext<'a> {
     /// is installed without re-fetching anything. See
     /// [`crate::status`](crate::status).
     pub version: &'a str,
+    /// The name of the shared placeholder archive this wrap points its
+    /// mandatory `source_filename` at. See
+    /// [`crate::generate::EMPTY_TAR_FILENAME`].
+    pub empty_tar_filename: &'a str,
 }
 
-/// Renders `SuiteSparse-<triplet>.wrap`, a normal binary wrap for one
+/// Renders `ExampleThing-<triplet>.wrap`, a normal binary wrap for one
 /// platform's tarball.
 #[derive(Template)]
 #[template(path = "binary_wrap.jinja", escape = "none")]
@@ -97,7 +102,7 @@ pub struct LibraryProductView {
 #[template(path = "triplet_overlay.jinja", escape = "none")]
 pub struct TripletOverlayContext<'a> {
     /// The per-triplet subproject name, for example
-    /// `SuiteSparse-x86_64-linux-gnu`.
+    /// `ExampleThing-x86_64-linux-gnu`.
     pub name: &'a str,
     pub dependency_variable: String,
     pub library_products: Vec<LibraryProductView>,
@@ -111,18 +116,18 @@ mod tests {
 
     #[test]
     fn dependency_variable_is_lowercased() {
-        assert_eq!(dependency_variable("SuiteSparse"), "suitesparse_dep");
+        assert_eq!(dependency_variable("ExampleThing"), "examplething_dep");
     }
 
     #[test]
     fn link_name_strips_directory_lib_prefix_and_extension() {
-        assert_eq!(link_name_from_path("lib/libamd.so"), "amd");
-        assert_eq!(link_name_from_path("lib/libcholmod.so"), "cholmod");
-        assert_eq!(link_name_from_path("bin/libamd.dll"), "amd");
+        assert_eq!(link_name_from_path("lib/libexample.so"), "example");
+        assert_eq!(link_name_from_path("lib/libother.so"), "other");
+        assert_eq!(link_name_from_path("bin/libexample.dll"), "example");
     }
 
     #[test]
     fn link_name_handles_a_versioned_soname() {
-        assert_eq!(link_name_from_path("lib/libamd.so.3"), "amd");
+        assert_eq!(link_name_from_path("lib/libexample.so.3"), "example");
     }
 }

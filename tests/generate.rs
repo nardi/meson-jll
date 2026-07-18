@@ -34,6 +34,20 @@ fn generates_a_full_wrap_set_from_a_fixture_jll() {
     assert!(selector_wrap.contains("# meson-jll: name=ExampleThing version=1.2.3+0"));
     assert!(selector_wrap.contains("directory = ExampleThing"));
     assert!(selector_wrap.contains("dependency_names = ExampleThing"));
+    // Meson does not discover packagefiles/<name>/ on its own: without this,
+    // the overlay is silently never applied.
+    assert!(selector_wrap.contains("patch_directory = ExampleThing"));
+    // A source-less [wrap-file] is rejected by Meson outright: it always
+    // requires a source_filename, even for an overlay-only wrap.
+    assert!(selector_wrap.contains(&format!(
+        "source_filename = {}",
+        generate::EMPTY_TAR_FILENAME
+    )));
+    assert!(output_dir
+        .path()
+        .join("packagefiles")
+        .join(generate::EMPTY_TAR_FILENAME)
+        .exists());
 
     let selector_overlay = fs::read_to_string(
         output_dir
@@ -59,6 +73,7 @@ fn generates_a_full_wrap_set_from_a_fixture_jll() {
     assert!(linux_wrap.contains(
         "source_hash = 1111111111111111111111111111111111111111111111111111111111111111"
     ));
+    assert!(linux_wrap.contains("patch_directory = ExampleThing-x86_64-linux-gnu"));
 
     let linux_overlay = fs::read_to_string(
         output_dir

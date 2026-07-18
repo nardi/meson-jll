@@ -1,6 +1,14 @@
 # meson-jll: name={{ name }} version={{ version }}
+# Meson requires a source for every [wrap-file], even an overlay-only one,
+# so this points at a shared empty archive instead of a real download (see
+# generate::EMPTY_TAR_FILENAME). The actual content comes entirely from
+# patch_directory below.
 [wrap-file]
 directory = {{ name }}
+source_filename = {{ empty_tar_filename }}
+patch_directory = {{ name }}
 
 [provide]
+# Makes a plain dependency('{{ name }}') call in a consuming project
+# resolve to this subproject automatically, with no fallback wiring.
 dependency_names = {{ name }}
