@@ -8,6 +8,15 @@ fs = import('fs')
 include_dirs = []
 if fs.is_dir('include')
   include_dirs = [include_directories('include')]
+  # Some JLLs (SuiteSparse and HiGHS both do) namespace their headers under
+  # include/<lowercased-package-name>/ instead of flat under include/, to
+  # avoid collisions between generically named headers from different JLLs.
+  # Nothing in the JLL's own metadata says which convention it follows, so
+  # both are added when present, covering `#include <SuiteSparse_config.h>`
+  # and `#include <suitesparse/SuiteSparse_config.h>` alike.
+  if fs.is_dir('include/{{ namespaced_include_dir }}')
+    include_dirs += [include_directories('include/{{ namespaced_include_dir }}')]
+  endif
 endif
 
 # One cc.find_library() per library this platform's wrapper script

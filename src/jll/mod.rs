@@ -64,7 +64,10 @@ pub fn load<S: Source>(source: &S) -> Result<JllPackage> {
     let platforms = platforms
         .into_iter()
         .map(|platform| {
-            let wrapper_path = format!("src/wrappers/{}.jl", platform.triplet.identifier());
+            let wrapper_path = format!(
+                "src/wrappers/{}.jl",
+                platform.triplet.julia_wrapper_identifier()
+            );
             let library_products = source
                 .fetch(&wrapper_path)
                 .map(|text| wrappers::parse_library_products(&text))

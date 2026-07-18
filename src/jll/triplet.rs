@@ -124,6 +124,21 @@ impl Os {
         // Meson's vocabulary), so they are kept as separate methods.
         self.identifier()
     }
+
+    /// The word Julia's own BinaryBuilder triplet convention uses for this
+    /// operating system, needed to find a JLL's `src/wrappers/<triplet>.jl`
+    /// (see [`Triplet::julia_wrapper_identifier`]). Matches `identifier()`
+    /// for Linux, but not for the other three: Julia's own convention is
+    /// `apple-darwin`, `unknown-freebsd`, and `w64-mingw32` where this
+    /// tool's own file naming just says `darwin`, `freebsd`, and `windows`.
+    fn julia_identifier(self) -> &'static str {
+        match self {
+            Self::Linux => "linux",
+            Self::MacOs => "apple-darwin",
+            Self::Windows => "w64-mingw32",
+            Self::FreeBsd => "unknown-freebsd",
+        }
+    }
 }
 
 /// The C standard library on a Linux platform. Not meaningful anywhere else.
@@ -219,6 +234,38 @@ impl Triplet {
         }
         identifier
     }
+
+    /// The triplet string Julia's own BinaryBuilder convention names this
+    /// platform's `src/wrappers/<this>.jl` with, which must be matched
+    /// exactly to find that file: this tool does not otherwise know that
+    /// file's name, only its own naming scheme from [`Self::identifier`].
+    ///
+    /// The two agree on everything except the operating system word (see
+    /// [`Os::julia_identifier`]) and, when this JLL splits a platform by
+    /// Fortran runtime version, on how much of it is used: this tool's own
+    /// naming keeps the full `Artifacts.toml` value (for example `5.0.0`),
+    /// but Julia's wrapper filenames (and, as it happens, its release
+    /// tarball names) use only the major version (`libgfortran5`).
+    pub fn julia_wrapper_identifier(&self) -> String {
+        let mut identifier = format!("{}-{}", self.arch.identifier(), self.os.julia_identifier());
+        if let Some(libc) = self.libc {
+            identifier.push('-');
+            identifier.push_str(libc.identifier());
+        }
+        if let Some(call_abi) = self.call_abi {
+            identifier.push_str(call_abi.identifier());
+        }
+        if let Some(abi) = &self.cxxstring_abi {
+            identifier.push_str("-cxx");
+            identifier.push_str(abi.trim_start_matches("cxx"));
+        }
+        if let Some(version) = &self.libgfortran_version {
+            let major_version = version.split('.').next().unwrap_or(version);
+            identifier.push_str("-libgfortran");
+            identifier.push_str(major_version);
+        }
+        identifier
+    }
 }
 
 #[cfg(test)]
@@ -275,5 +322,83 @@ mod tests {
             libgfortran_version: None,
         };
         assert_eq!(triplet.identifier(), "aarch64-darwin");
+    }
+
+    /// Regression test: `identifier()` (this tool's own file naming) and
+    /// `julia_wrapper_identifier()` (Julia's own convention, needed to find
+    /// `src/wrappers/<this>.jl`) used to be the same method, so a wrapper
+    /// script fetch silently found nothing on macOS, FreeBSD, and Windows,
+    /// where the two conventions actually differ, and every library on
+    /// those platforms went unlinked without any error at all.
+    #[test]
+    fn julia_wrapper_identifier_differs_from_own_identifier_on_macos() {
+        let triplet = Triplet {
+            arch: Arch::X86_64,
+            os: Os::MacOs,
+            libc: None,
+            call_abi: None,
+            cxxstring_abi: None,
+            libgfortran_version: None,
+        };
+        assert_eq!(triplet.identifier(), "x86_64-darwin");
+        assert_eq!(triplet.julia_wrapper_identifier(), "x86_64-apple-darwin");
+    }
+
+    #[test]
+    fn julia_wrapper_identifier_differs_from_own_identifier_on_freebsd() {
+        let triplet = Triplet {
+            arch: Arch::X86_64,
+            os: Os::FreeBsd,
+            libc: None,
+            call_abi: None,
+            cxxstring_abi: None,
+            libgfortran_version: None,
+        };
+        assert_eq!(triplet.identifier(), "x86_64-freebsd");
+        assert_eq!(triplet.julia_wrapper_identifier(), "x86_64-unknown-freebsd");
+    }
+
+    #[test]
+    fn julia_wrapper_identifier_differs_from_own_identifier_on_windows() {
+        let triplet = Triplet {
+            arch: Arch::X86_64,
+            os: Os::Windows,
+            libc: None,
+            call_abi: None,
+            cxxstring_abi: None,
+            libgfortran_version: None,
+        };
+        assert_eq!(triplet.identifier(), "x86_64-windows");
+        assert_eq!(triplet.julia_wrapper_identifier(), "x86_64-w64-mingw32");
+    }
+
+    #[test]
+    fn julia_wrapper_identifier_uses_only_the_major_libgfortran_version() {
+        let triplet = Triplet {
+            arch: Arch::X86_64,
+            os: Os::Linux,
+            libc: Some(Libc::Glibc),
+            call_abi: None,
+            cxxstring_abi: None,
+            libgfortran_version: Some("5.0.0".to_string()),
+        };
+        assert_eq!(triplet.identifier(), "x86_64-linux-gnu-libgfortran5.0.0");
+        assert_eq!(
+            triplet.julia_wrapper_identifier(),
+            "x86_64-linux-gnu-libgfortran5"
+        );
+    }
+
+    #[test]
+    fn julia_wrapper_identifier_matches_own_identifier_on_linux() {
+        let triplet = Triplet {
+            arch: Arch::Armv7l,
+            os: Os::Linux,
+            libc: Some(Libc::Glibc),
+            call_abi: Some(CallAbi::HardFloat),
+            cxxstring_abi: Some("cxx11".to_string()),
+            libgfortran_version: None,
+        };
+        assert_eq!(triplet.identifier(), triplet.julia_wrapper_identifier());
     }
 }

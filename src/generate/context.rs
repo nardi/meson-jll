@@ -16,9 +16,23 @@ pub fn dependency_variable(name: &str) -> String {
 
 /// Derives the plain library name Meson's `cc.find_library()` expects (for
 /// example `example`) from a JLL library path such as `lib/libexample.so`
-/// or `bin/libexample.dll`.
+/// or `bin\\libexample.dll`.
+///
+/// The path's directory is deliberately not used for anything: it is where
+/// Julia's `@init_library_product` `dlopen`s the library from at runtime,
+/// which on Windows is the DLL itself under `bin/`, not the import library
+/// `find_library` actually needs to link against. Julia's own JLLWrappers
+/// build always places that import library under `lib/` instead (as
+/// `lib<name>.dll.a` on a MinGW target, matching `lib<name>.so` /
+/// `lib<name>.dylib` on the platforms where the runtime and link-time
+/// files are one and the same), so the overlay always searches `lib/`
+/// regardless of platform, and only the name is taken from this path.
+/// A Windows path is doubled-backslash in the Julia source and read here
+/// as two literal backslash characters, normalised to a forward slash
+/// before taking the final path component.
 pub fn link_name_from_path(path: &str) -> String {
-    let file_name = path.rsplit('/').next().unwrap_or(path);
+    let normalized = path.replace('\\', "/");
+    let file_name = normalized.rsplit('/').next().unwrap_or(&normalized);
     let before_first_dot = file_name.split('.').next().unwrap_or(file_name);
     before_first_dot
         .strip_prefix("lib")
@@ -116,6 +130,14 @@ pub struct TripletOverlayContext<'a> {
     pub library_products: Vec<LibraryProductView>,
     /// The bare names of the other JLL packages this platform links against.
     pub jll_dependencies: Vec<&'a str>,
+    /// The package's own bare name, lowercased. A number of JLLs (SuiteSparse
+    /// and HiGHS both do this) install their headers into `include/<this>/`
+    /// instead of flat under `include/`, to avoid collisions between
+    /// generically named headers (`config.h`) from different JLLs used
+    /// together. Checked for and added as an extra include directory
+    /// alongside plain `include` when it exists, since nothing in a JLL's
+    /// own metadata says whether it follows this convention.
+    pub namespaced_include_dir: String,
 }
 
 #[cfg(test)]
@@ -132,6 +154,13 @@ mod tests {
         assert_eq!(link_name_from_path("lib/libexample.so"), "example");
         assert_eq!(link_name_from_path("lib/libother.so"), "other");
         assert_eq!(link_name_from_path("bin/libexample.dll"), "example");
+    }
+
+    #[test]
+    fn link_name_handles_a_windows_backslash_path() {
+        // Julia's wrapper source doubles the backslash, so it is read here
+        // as two literal backslash characters.
+        assert_eq!(link_name_from_path("bin\\libexample.dll"), "example");
     }
 
     #[test]

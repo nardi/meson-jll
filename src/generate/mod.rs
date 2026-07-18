@@ -145,6 +145,7 @@ fn write_triplet_overlay(
         dependency_variable: dependency_variable_name.to_string(),
         library_products,
         jll_dependencies: package.dependencies.iter().map(String::as_str).collect(),
+        namespaced_include_dir: package.name.to_lowercase(),
     };
     let rendered = render(&context, "triplet_overlay.jinja")?;
     let path = subprojects_dir
