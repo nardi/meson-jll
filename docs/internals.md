@@ -45,20 +45,28 @@ does not care which was used.
 ### Parse the metadata into one model
 
 [`jll::load`](crate::jll::load) reads the three files a JLL publishes and
-folds them into a single [`jll::JllPackage`](crate::jll::JllPackage):
+folds them into a single [`jll::JllPackage`](crate::jll::JllPackage). That
+value is a small tree of plain types, one per piece of the metadata:
 
-- `Project.toml` gives the package name, its version, and the names of the
-  other JLLs it depends on.
-- `Artifacts.toml` gives one entry per platform, each parsed into a
-  [`jll::triplet::Triplet`](crate::jll::triplet::Triplet) together with its
-  tarball URL and hash.
-- `src/wrappers/<triplet>.jl` gives the exact library files for a platform,
-  parsed into [`jll::wrappers::LibraryProduct`](crate::jll::wrappers::LibraryProduct)
-  values. This is the same source of truth Julia itself uses.
+- [`jll::JllPackage`](crate::jll::JllPackage) is the whole package: its name,
+  its version, the names of the other JLLs it depends on, and the list of
+  platforms it supports. It comes from `Project.toml` together with the
+  entries below.
+- [`jll::ResolvedPlatform`](crate::jll::ResolvedPlatform) is one supported
+  platform: an [`jll::artifacts::Platform`](crate::jll::artifacts::Platform)
+  paired with the libraries found for it. `Artifacts.toml` provides one
+  `Platform` per entry, carrying the tarball URL and hash.
+- [`jll::triplet::Triplet`](crate::jll::triplet::Triplet) describes a
+  platform's architecture, operating system, and ABI. It knows both the
+  identifier used to name generated files and the `host_machine` values that
+  select it, which is the pairing the selector wrap relies on.
+- [`jll::wrappers::LibraryProduct`](crate::jll::wrappers::LibraryProduct) is
+  one library inside a platform's tarball, parsed from
+  `src/wrappers/<triplet>.jl`. This is the same source of truth Julia itself
+  uses.
 
-The `Triplet` is the key type. It knows both the identifier used to name
-generated files and the `host_machine` values that select it. That mapping
-is what the whole scheme rests on:
+As an example of what these types capture, a `Triplet` renders to the
+identifier that names its generated files:
 
 ```rust
 use meson_jll::jll::triplet::{Arch, Libc, Os, Triplet};
