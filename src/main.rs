@@ -231,7 +231,7 @@ fn run_info(name: &str) -> anyhow::Result<()> {
     registry::canonical_bare_name(name)?;
     let (owner, repo) = registry::resolve(name);
     let tags = registry::list_tags(&owner, &repo)?;
-    for tag in tags {
+    for (tag, _sha) in tags {
         if let Some(version) = registry::version_from_tag(&tag) {
             println!("{version}");
         }

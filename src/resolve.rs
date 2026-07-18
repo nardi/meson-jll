@@ -28,6 +28,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::error::{Error, Result};
+use crate::git;
 use crate::jll::project::ProjectToml;
 use crate::registry;
 use crate::source::{GithubSource, Source};
@@ -99,9 +100,20 @@ impl Catalog for GithubCatalog {
         // versions" from `list_tags` itself, the same outcome as a real
         // JLL with zero releases, rather than a hard error here.
         let tags = registry::list_tags(&owner, &repo)?;
+
+        // `list_tags` already learned each tag's commit from the same
+        // `git ls-remote` call. `metadata`, right after this, is about to
+        // ask `ls_remote_sha` for the exact same (url, tag) pair to key its
+        // archive cache, so recording it now turns that into a memo hit
+        // instead of a second ~500ms round trip for a fact already known.
+        let repo_url = format!("https://github.com/{owner}/{repo}.git");
+        for (tag, sha) in &tags {
+            git::remember_sha(&repo_url, tag, sha);
+        }
+
         Ok(tags
             .iter()
-            .filter_map(|tag| registry::version_from_tag(tag))
+            .filter_map(|(tag, _sha)| registry::version_from_tag(tag))
             .filter_map(|raw| {
                 Version::parse(raw)
                     .ok()

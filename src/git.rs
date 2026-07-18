@@ -50,31 +50,51 @@ fn run(args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Lists the tag references of a remote repository, in whatever order the
-/// remote's own ref advertisement returns them. This is not creation order,
-/// so a caller that cares about "the latest version" compares parsed
-/// versions rather than relying on this order.
-pub fn ls_remote_tags(url: &str) -> Result<Vec<String>> {
+/// Lists the tags of a remote repository, each paired with the commit it
+/// points at, in whatever order the remote's own ref advertisement returns
+/// them. This is not creation order, so a caller that cares about "the
+/// latest version" compares parsed versions rather than relying on it.
+///
+/// A single `git ls-remote --tags` already carries every tag's commit, so a
+/// caller that is about to ask [`ls_remote_sha`] for one of these same
+/// `(url, tag)` pairs should [`remember_sha`] it first instead, turning
+/// that second lookup into a memo hit rather than another round trip.
+pub fn ls_remote_tags(url: &str) -> Result<Vec<(String, String)>> {
     let output = run(&["ls-remote", "--tags", url])?;
     Ok(parse_tag_refs(&output))
 }
 
-/// Pulls tag names out of `git ls-remote --tags`'s output (lines of
-/// `<sha>\trefs/tags/<name>`), sorted and deduplicated.
-fn parse_tag_refs(output: &str) -> Vec<String> {
-    let mut tags: Vec<String> = output
-        .lines()
-        .filter_map(|line| line.split('\t').nth(1))
-        .filter_map(|reference| reference.strip_prefix("refs/tags/"))
-        // An annotated tag is advertised twice: once as the tag object
-        // itself, and once dereferenced (suffixed `^{}`) to the commit it
-        // points at. Only the tag name is wanted, so the dereferenced
-        // duplicate is dropped.
-        .filter(|tag| !tag.ends_with("^{}"))
-        .map(String::from)
-        .collect();
-    tags.sort();
-    tags.dedup();
+/// Pulls (tag name, commit sha) pairs out of `git ls-remote --tags`'s
+/// output (lines of `<sha>\trefs/tags/<name>`), sorted by name and
+/// deduplicated.
+///
+/// An annotated tag is advertised twice: once as the tag object itself,
+/// and once dereferenced (suffixed `^{}`) to the commit it actually points
+/// at. The dereferenced commit is the one wanted, matching
+/// [`parse_ref_sha`], regardless of which of the two lines is seen first.
+fn parse_tag_refs(output: &str) -> Vec<(String, String)> {
+    let mut shas_by_name: HashMap<String, String> = HashMap::new();
+    for line in output.lines() {
+        let mut columns = line.split('\t');
+        let (Some(sha), Some(reference)) = (columns.next(), columns.next()) else {
+            continue;
+        };
+        let Some(name) = reference.strip_prefix("refs/tags/") else {
+            continue;
+        };
+        match name.strip_suffix("^{}") {
+            Some(dereferenced_name) => {
+                shas_by_name.insert(dereferenced_name.to_string(), sha.to_string());
+            }
+            None => {
+                shas_by_name
+                    .entry(name.to_string())
+                    .or_insert_with(|| sha.to_string());
+            }
+        }
+    }
+    let mut tags: Vec<(String, String)> = shas_by_name.into_iter().collect();
+    tags.sort_by(|left, right| left.0.cmp(&right.0));
     tags
 }
 
@@ -113,6 +133,15 @@ pub fn ls_remote_sha(url: &str, reference: &str) -> Result<String> {
 
     lock_sha_cache().insert(key, sha.clone());
     Ok(sha)
+}
+
+/// Records that `reference` on `url` is already known to point at `sha`,
+/// without asking git anything, so a later [`ls_remote_sha`] call for this
+/// same pair is a memo hit instead of another ~500ms round trip. Meant for
+/// a caller that already has this answer as a side effect of something
+/// else it just did (see [`ls_remote_tags`]).
+pub fn remember_sha(url: &str, reference: &str, sha: &str) {
+    lock_sha_cache().insert((url.to_string(), reference.to_string()), sha.to_string());
 }
 
 /// Locks the process-lifetime memo table [`ls_remote_sha`] reads and writes.
@@ -159,27 +188,27 @@ def456\trefs/tags/ExampleThing-v1.3.0+0
         assert_eq!(
             parse_tag_refs(output),
             vec![
-                "ExampleThing-v1.2.3+0".to_string(),
-                "ExampleThing-v1.3.0+0".to_string(),
+                ("ExampleThing-v1.2.3+0".to_string(), "abc123".to_string()),
+                ("ExampleThing-v1.3.0+0".to_string(), "def456".to_string()),
             ]
         );
     }
 
     #[test]
-    fn drops_the_dereferenced_duplicate_of_an_annotated_tag() {
+    fn an_annotated_tag_reports_the_dereferenced_commit_not_the_tag_object() {
         let output = "\
-abc123\trefs/tags/ExampleThing-v1.2.3+0
-def456\trefs/tags/ExampleThing-v1.2.3+0^{}
+tagobject123\trefs/tags/ExampleThing-v1.2.3+0
+commit456\trefs/tags/ExampleThing-v1.2.3+0^{}
 ";
         assert_eq!(
             parse_tag_refs(output),
-            vec!["ExampleThing-v1.2.3+0".to_string()]
+            vec![("ExampleThing-v1.2.3+0".to_string(), "commit456".to_string())]
         );
     }
 
     #[test]
     fn empty_output_is_no_tags() {
-        assert_eq!(parse_tag_refs(""), Vec::<String>::new());
+        assert_eq!(parse_tag_refs(""), Vec::<(String, String)>::new());
     }
 
     #[test]

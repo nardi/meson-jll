@@ -42,15 +42,15 @@ pub fn resolve(name: &str) -> (String, String) {
 }
 
 /// Lists the release tags of a JLL repository, via `git ls-remote` rather
-/// than the GitHub API (see the module documentation). Tag names look like
-/// `ExampleThing-v1.2.3+0`.
+/// than the GitHub API (see the module documentation), each paired with the
+/// commit it points at. Tag names look like `ExampleThing-v1.2.3+0`.
 ///
 /// A repository that does not exist at all reads as an empty list, the
 /// same outcome as a real JLL with zero releases, rather than a hard
 /// error, since a name reached only transitively that turns out
 /// unpublished should not abort a whole resolve (see
 /// [`crate::resolve::GithubCatalog::versions`]).
-pub fn list_tags(owner: &str, repo: &str) -> Result<Vec<String>> {
+pub fn list_tags(owner: &str, repo: &str) -> Result<Vec<(String, String)>> {
     let url = format!("https://github.com/{owner}/{repo}.git");
     match git::ls_remote_tags(&url) {
         Ok(tags) => Ok(tags),
@@ -73,7 +73,7 @@ pub fn version_from_tag(tag: &str) -> Option<&str> {
 pub fn latest_version(owner: &str, repo: &str) -> Result<String> {
     let tags = list_tags(owner, repo)?;
     tags.iter()
-        .filter_map(|tag| version_from_tag(tag))
+        .filter_map(|(tag, _sha)| version_from_tag(tag))
         .filter_map(|raw| Version::parse(raw).ok().map(|version| (raw, version)))
         .max_by(|left, right| left.1.cmp(&right.1))
         .map(|(raw, _)| raw.to_string())
