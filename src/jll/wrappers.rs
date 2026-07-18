@@ -1,0 +1,195 @@
+//! Parsing a JLL's per-platform wrapper script (`src/wrappers/<triplet>.jl`).
+//!
+//! This file is Julia source, not a data format, so this parser does not
+//! embed a Julia interpreter. It only recognises the two macro calls that
+//! matter for a Meson dependency: the ones that name a library product and
+//! the path it lives at once its tarball is extracted. A real wrapper file
+//! looks like this:
+//!
+//! ```julia
+//! JLLWrappers.@declare_library_product(libamd, "libamd.so.3")
+//! JLLWrappers.@init_library_product(
+//!     libamd,
+//!     "lib/libamd.so",
+//!     RTLD_LAZY | RTLD_DEEPBIND,
+//! )
+//! ```
+//!
+//! `@declare_library_product` gives the soname, `@init_library_product`
+//! gives the relative path. Both macro calls exist for every library, so
+//! the two are matched independently and then joined by variable name.
+//!
+//! Only library products are recognised in this first version.
+//! `ExecutableProduct` and `FileProduct` are not yet supported, since no
+//! Meson dependency needs to expose them the way it needs to expose
+//! libraries to link against.
+
+use nom::branch::alt;
+use nom::bytes::complete::{tag, take_until};
+use nom::character::complete::{char, multispace0};
+use nom::combinator::recognize;
+use nom::multi::many1;
+use nom::sequence::preceded;
+use nom::IResult;
+
+/// One library this JLL provides, once its tarball has been extracted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryProduct {
+    /// The Julia variable name, for example `libamd`. Reused as the Meson
+    /// variable name for the corresponding `cc.find_library()` result.
+    pub variable: String,
+    /// The path relative to the extracted tarball, for example
+    /// `lib/libamd.so`.
+    pub path: String,
+    /// The soname declared for this library, for example `libamd.so.3`.
+    /// Currently unused by the generator, kept for future use (for example
+    /// emitting an explicit `SONAME` check).
+    #[allow(dead_code)]
+    pub soname: String,
+}
+
+/// Scans a wrapper script's source text for library product declarations.
+///
+/// Products are matched by scanning for `@declare_library_product` and
+/// `@init_library_product` calls anywhere in the file and correlating them
+/// by variable name, rather than parsing the file as a whole. Julia source
+/// around these calls (functions, comments, `using` statements) is ignored.
+pub fn parse_library_products(source: &str) -> Vec<LibraryProduct> {
+    let sonames = scan_all(source, declare_library_product);
+    let paths = scan_all(source, init_library_product);
+
+    sonames
+        .into_iter()
+        .filter_map(|(variable, soname)| {
+            paths
+                .iter()
+                .find(|(other_variable, _)| *other_variable == variable)
+                .map(|(_, path)| LibraryProduct {
+                    variable: variable.clone(),
+                    path: path.clone(),
+                    soname,
+                })
+        })
+        .collect()
+}
+
+/// Repeatedly applies `parser` to `input`, skipping forward to the next
+/// match each time it fails, until no more matches remain.
+fn scan_all<'a, T>(mut input: &'a str, parser: impl Fn(&'a str) -> IResult<&'a str, T>) -> Vec<T> {
+    let mut matches = Vec::new();
+    while let Ok((rest, value)) = parser(input) {
+        matches.push(value);
+        input = rest;
+    }
+    matches
+}
+
+/// A Julia identifier: letters, digits, and underscores.
+fn identifier(input: &str) -> IResult<&str, &str> {
+    recognize(many1(alt((
+        nom::character::complete::alphanumeric1,
+        nom::bytes::complete::tag("_"),
+    ))))(input)
+}
+
+/// A double-quoted string literal, without escape handling: the paths and
+/// sonames in a wrapper file never contain an escaped quote.
+fn string_literal(input: &str) -> IResult<&str, &str> {
+    let (input, _) = char('"')(input)?;
+    let (input, contents) = take_until("\"")(input)?;
+    let (input, _) = char('"')(input)?;
+    Ok((input, contents))
+}
+
+/// Matches the next `@declare_library_product(name, "soname")` call,
+/// skipping any preceding text.
+fn declare_library_product(input: &str) -> IResult<&str, (String, String)> {
+    let (input, _) = preceded(
+        take_until("@declare_library_product"),
+        tag("@declare_library_product"),
+    )(input)?;
+    let (input, _) = char('(')(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = char(',')(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, soname) = string_literal(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = char(')')(input)?;
+    Ok((input, (name.to_string(), soname.to_string())))
+}
+
+/// Matches the next `@init_library_product(name, "path", <flags>)` call,
+/// skipping any preceding text. The flags argument is skipped rather than
+/// parsed, since only the path is needed.
+fn init_library_product(input: &str) -> IResult<&str, (String, String)> {
+    let (input, _) = preceded(
+        take_until("@init_library_product"),
+        tag("@init_library_product"),
+    )(input)?;
+    let (input, _) = char('(')(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = char(',')(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, path) = string_literal(input)?;
+    let (input, _) = take_until(")")(input)?;
+    let (input, _) = char(')')(input)?;
+    Ok((input, (name.to_string(), path.to_string())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EXAMPLE: &str = r#"
+        using libblastrampoline_jll
+
+        export libamd, libcholmod
+
+        const libamd_path = ""
+
+        JLLWrappers.@declare_library_product(libamd, "libamd.so.3")
+        JLLWrappers.@declare_library_product(libcholmod, "libcholmod.so.5")
+
+        function __init__()
+            JLLWrappers.@init_library_product(
+                libamd,
+                "lib/libamd.so",
+                RTLD_LAZY | RTLD_DEEPBIND,
+            )
+            JLLWrappers.@init_library_product(
+                libcholmod,
+                "lib/libcholmod.so",
+                RTLD_LAZY | RTLD_DEEPBIND,
+            )
+        end
+    "#;
+
+    #[test]
+    fn parses_every_library_product() {
+        let products = parse_library_products(EXAMPLE);
+        assert_eq!(
+            products,
+            vec![
+                LibraryProduct {
+                    variable: "libamd".to_string(),
+                    path: "lib/libamd.so".to_string(),
+                    soname: "libamd.so.3".to_string(),
+                },
+                LibraryProduct {
+                    variable: "libcholmod".to_string(),
+                    path: "lib/libcholmod.so".to_string(),
+                    soname: "libcholmod.so.5".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_source_yields_no_products() {
+        assert_eq!(parse_library_products(""), Vec::new());
+    }
+}
