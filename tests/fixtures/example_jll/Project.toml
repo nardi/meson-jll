@@ -1,0 +1,7 @@
+name = "ExampleThing_jll"
+uuid = "00000000-0000-0000-0000-000000000000"
+version = "1.2.3+0"
+
+[deps]
+JLLWrappers = "692b3bcd-3c85-4b1f-b108-f13ce0eb3210"
+Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
