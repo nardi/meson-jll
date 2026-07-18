@@ -7,10 +7,10 @@
 //! looks like this:
 //!
 //! ```julia
-//! JLLWrappers.@declare_library_product(libamd, "libamd.so.3")
+//! JLLWrappers.@declare_library_product(libexample, "libexample.so.3")
 //! JLLWrappers.@init_library_product(
-//!     libamd,
-//!     "lib/libamd.so",
+//!     libexample,
+//!     "lib/libexample.so",
 //!     RTLD_LAZY | RTLD_DEEPBIND,
 //! )
 //! ```
@@ -145,24 +145,24 @@ mod tests {
     use super::*;
 
     const EXAMPLE: &str = r#"
-        using libblastrampoline_jll
+        using OtherThing_jll
 
-        export libamd, libcholmod
+        export libexample, libother
 
-        const libamd_path = ""
+        const libexample_path = ""
 
-        JLLWrappers.@declare_library_product(libamd, "libamd.so.3")
-        JLLWrappers.@declare_library_product(libcholmod, "libcholmod.so.5")
+        JLLWrappers.@declare_library_product(libexample, "libexample.so.3")
+        JLLWrappers.@declare_library_product(libother, "libother.so.5")
 
         function __init__()
             JLLWrappers.@init_library_product(
-                libamd,
-                "lib/libamd.so",
+                libexample,
+                "lib/libexample.so",
                 RTLD_LAZY | RTLD_DEEPBIND,
             )
             JLLWrappers.@init_library_product(
-                libcholmod,
-                "lib/libcholmod.so",
+                libother,
+                "lib/libother.so",
                 RTLD_LAZY | RTLD_DEEPBIND,
             )
         end
@@ -175,14 +175,14 @@ mod tests {
             products,
             vec![
                 LibraryProduct {
-                    variable: "libamd".to_string(),
-                    path: "lib/libamd.so".to_string(),
-                    soname: "libamd.so.3".to_string(),
+                    variable: "libexample".to_string(),
+                    path: "lib/libexample.so".to_string(),
+                    soname: "libexample.so.3".to_string(),
                 },
                 LibraryProduct {
-                    variable: "libcholmod".to_string(),
-                    path: "lib/libcholmod.so".to_string(),
-                    soname: "libcholmod.so.5".to_string(),
+                    variable: "libother".to_string(),
+                    path: "lib/libother.so".to_string(),
+                    soname: "libother.so.5".to_string(),
                 },
             ]
         );

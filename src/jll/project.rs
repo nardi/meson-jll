@@ -28,7 +28,7 @@ impl ProjectToml {
     }
 
     /// The package name with its `_jll` suffix removed, for example
-    /// `SuiteSparse` from `SuiteSparse_jll`. This is the name used
+    /// `ExampleThing` from `ExampleThing_jll`. This is the name used
     /// everywhere in the generated wraps: as the public dependency name and
     /// as the file name prefix.
     pub fn bare_name(&self) -> &str {
@@ -36,7 +36,7 @@ impl ProjectToml {
     }
 
     /// The bare names of the other JLL packages this one depends on, for
-    /// example `libblastrampoline` from `libblastrampoline_jll`.
+    /// example `OtherThing` from `OtherThing_jll`.
     pub fn jll_dependencies(&self) -> Vec<String> {
         self.deps
             .keys()
@@ -51,13 +51,13 @@ mod tests {
     use super::*;
 
     const EXAMPLE: &str = r#"
-        name = "SuiteSparse_jll"
-        uuid = "bea87d4a-7f5b-5778-9afe-8cc45184846c"
-        version = "7.12.1+0"
+        name = "ExampleThing_jll"
+        uuid = "00000000-0000-0000-0000-000000000000"
+        version = "1.2.3+0"
 
         [deps]
         JLLWrappers = "692b3bcd-3c85-4b1f-b108-f13ce0eb3210"
-        libblastrampoline_jll = "8e850b90-86db-534c-a0d3-1478176c7d93"
+        OtherThing_jll = "11111111-1111-1111-1111-111111111111"
         Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
         Artifacts = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
     "#;
@@ -65,13 +65,13 @@ mod tests {
     #[test]
     fn parses_name_and_version() {
         let project = ProjectToml::parse(EXAMPLE).unwrap();
-        assert_eq!(project.bare_name(), "SuiteSparse");
-        assert_eq!(project.version, "7.12.1+0");
+        assert_eq!(project.bare_name(), "ExampleThing");
+        assert_eq!(project.version, "1.2.3+0");
     }
 
     #[test]
     fn finds_only_the_jll_dependency() {
         let project = ProjectToml::parse(EXAMPLE).unwrap();
-        assert_eq!(project.jll_dependencies(), vec!["libblastrampoline"]);
+        assert_eq!(project.jll_dependencies(), vec!["OtherThing"]);
     }
 }

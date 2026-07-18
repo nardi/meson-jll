@@ -40,7 +40,7 @@ pub fn installed_packages(subprojects_dir: &Path) -> Vec<InstalledPackage> {
 }
 
 /// Parses a marker line of the form
-/// `# meson-jll: name=SuiteSparse version=7.12.1+0`.
+/// `# meson-jll: name=ExampleThing version=1.2.3+0`.
 fn parse_marker(line: &str) -> Option<InstalledPackage> {
     let rest = line.strip_prefix("# meson-jll: ")?;
     let mut name = None;
@@ -64,9 +64,9 @@ mod tests {
 
     #[test]
     fn parses_a_marker_line() {
-        let package = parse_marker("# meson-jll: name=SuiteSparse version=7.12.1+0").unwrap();
-        assert_eq!(package.name, "SuiteSparse");
-        assert_eq!(package.version, "7.12.1+0");
+        let package = parse_marker("# meson-jll: name=ExampleThing version=1.2.3+0").unwrap();
+        assert_eq!(package.name, "ExampleThing");
+        assert_eq!(package.version, "1.2.3+0");
     }
 
     #[test]
@@ -76,6 +76,6 @@ mod tests {
 
     #[test]
     fn rejects_a_line_missing_a_field() {
-        assert_eq!(parse_marker("# meson-jll: name=SuiteSparse"), None);
+        assert_eq!(parse_marker("# meson-jll: name=ExampleThing"), None);
     }
 }

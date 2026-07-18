@@ -90,11 +90,11 @@ pub fn parse(text: &str, package_name: &str) -> Result<Vec<Platform>> {
 
 /// Keeps only the first platform seen for each triplet identifier.
 ///
-/// Some JLLs (`libblastrampoline_jll` among them) list several
-/// `Artifacts.toml` entries that only differ by `julia_version`, a
-/// selector this tool does not track since the generated wraps are not
-/// specific to a Julia install. Those entries would otherwise collapse to
-/// the same generated file name and collide when writing it twice.
+/// Some JLLs list several `Artifacts.toml` entries that only differ by
+/// `julia_version`, a selector this tool does not track since the
+/// generated wraps are not specific to a Julia install. Those entries would
+/// otherwise collapse to the same generated file name and collide when
+/// writing it twice.
 fn deduplicate_by_identifier(platforms: Vec<Platform>) -> Vec<Platform> {
     let mut seen = std::collections::HashSet::new();
     platforms
@@ -108,28 +108,28 @@ mod tests {
     use super::*;
 
     const EXAMPLE: &str = r#"
-        [[SuiteSparse]]
+        [[ExampleThing]]
         arch = "x86_64"
         os = "linux"
         libc = "glibc"
         git-tree-sha1 = "4041f7188b7c0cc6f93d0e24465b4ee01145e1d2"
 
-            [[SuiteSparse.download]]
-            url = "https://github.com/JuliaBinaryWrappers/SuiteSparse_jll.jl/releases/download/SuiteSparse-v7.12.1+0/SuiteSparse.v7.12.1.x86_64-linux-gnu.tar.gz"
+            [[ExampleThing.download]]
+            url = "https://example.invalid/ExampleThing.v1.2.3.x86_64-linux-gnu.tar.gz"
             sha256 = "7891c44ad3f5531f3198de6aa490130ed1c4a15fa45cd28f20201f5860979c93"
 
-        [[SuiteSparse]]
+        [[ExampleThing]]
         arch = "aarch64"
         os = "macos"
 
-            [[SuiteSparse.download]]
-            url = "https://github.com/JuliaBinaryWrappers/SuiteSparse_jll.jl/releases/download/SuiteSparse-v7.12.1+0/SuiteSparse.v7.12.1.aarch64-apple-darwin.tar.gz"
+            [[ExampleThing.download]]
+            url = "https://example.invalid/ExampleThing.v1.2.3.aarch64-apple-darwin.tar.gz"
             sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     "#;
 
     #[test]
     fn parses_two_platforms() {
-        let platforms = parse(EXAMPLE, "SuiteSparse").unwrap();
+        let platforms = parse(EXAMPLE, "ExampleThing").unwrap();
         assert_eq!(platforms.len(), 2);
         assert_eq!(platforms[0].triplet.identifier(), "x86_64-linux-gnu");
         assert_eq!(platforms[1].triplet.identifier(), "aarch64-darwin");

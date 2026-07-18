@@ -16,8 +16,8 @@ use crate::source::fetch_url;
 /// The GitHub organization every JLL package is published under.
 const ORGANIZATION: &str = "JuliaBinaryWrappers";
 
-/// Resolves a JLL name (bare, like `SuiteSparse`, or full, like
-/// `SuiteSparse_jll`) to its `(owner, repo)` on GitHub.
+/// Resolves a JLL name (bare, like `ExampleThing`, or full, like
+/// `ExampleThing_jll`) to its `(owner, repo)` on GitHub.
 pub fn resolve(name: &str) -> (String, String) {
     let bare = name.strip_suffix("_jll").unwrap_or(name);
     (ORGANIZATION.to_string(), format!("{bare}_jll.jl"))
@@ -29,7 +29,7 @@ struct TagResponse {
 }
 
 /// Lists the release tags of a JLL repository, most recent first, as
-/// reported by the GitHub API. Tag names look like `SuiteSparse-v7.12.1+0`.
+/// reported by the GitHub API. Tag names look like `ExampleThing-v1.2.3+0`.
 pub fn list_tags(owner: &str, repo: &str) -> Result<Vec<String>> {
     let url = format!("https://api.github.com/repos/{owner}/{repo}/tags?per_page=100");
     let body = fetch_url(&url)?;
@@ -38,8 +38,8 @@ pub fn list_tags(owner: &str, repo: &str) -> Result<Vec<String>> {
     Ok(tags.into_iter().map(|tag| tag.name).collect())
 }
 
-/// Extracts the JLL version (for example `7.12.1+0`) from a release tag
-/// name (for example `SuiteSparse-v7.12.1+0`).
+/// Extracts the JLL version (for example `1.2.3+0`) from a release tag
+/// name (for example `ExampleThing-v1.2.3+0`).
 pub fn version_from_tag(tag: &str) -> Option<&str> {
     tag.rsplit_once("-v").map(|(_, version)| version)
 }
@@ -66,8 +66,8 @@ struct RepoResponse {
 }
 
 /// Lists the bare names of every JLL package published under the
-/// `JuliaBinaryWrappers` organisation, for example `SuiteSparse` for the
-/// `SuiteSparse_jll.jl` repository.
+/// `JuliaBinaryWrappers` organization, for example `ExampleThing` for the
+/// `ExampleThing_jll.jl` repository.
 pub fn list_jll_packages() -> Result<Vec<String>> {
     let mut names = Vec::new();
     let mut page = 1;
@@ -106,10 +106,10 @@ mod tests {
     #[test]
     fn resolves_a_bare_name() {
         assert_eq!(
-            resolve("SuiteSparse"),
+            resolve("ExampleThing"),
             (
                 "JuliaBinaryWrappers".to_string(),
-                "SuiteSparse_jll.jl".to_string()
+                "ExampleThing_jll.jl".to_string()
             )
         );
     }
@@ -117,17 +117,17 @@ mod tests {
     #[test]
     fn resolves_a_full_name() {
         assert_eq!(
-            resolve("SuiteSparse_jll"),
+            resolve("ExampleThing_jll"),
             (
                 "JuliaBinaryWrappers".to_string(),
-                "SuiteSparse_jll.jl".to_string()
+                "ExampleThing_jll.jl".to_string()
             )
         );
     }
 
     #[test]
     fn extracts_version_from_tag() {
-        assert_eq!(version_from_tag("SuiteSparse-v7.12.1+0"), Some("7.12.1+0"));
+        assert_eq!(version_from_tag("ExampleThing-v1.2.3+0"), Some("1.2.3+0"));
         assert_eq!(version_from_tag("not-a-version-tag"), Some("ersion-tag"));
         assert_eq!(version_from_tag("notag"), None);
     }

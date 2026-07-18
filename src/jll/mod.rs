@@ -19,7 +19,7 @@ use wrappers::LibraryProduct;
 /// One fully resolved JLL package, ready to generate a wrap set from.
 #[derive(Debug)]
 pub struct JllPackage {
-    /// The bare package name, for example `SuiteSparse`.
+    /// The bare package name, for example `ExampleThing`.
     pub name: String,
     /// The JLL release version, for example `7.12.1+0`.
     pub version: String,
@@ -44,7 +44,7 @@ pub struct ResolvedPlatform {
 }
 
 /// Loads a JLL package's metadata from `source`, which must already be
-/// pinned to the git ref (a tag such as `SuiteSparse-v7.12.1+0`, or `main`
+/// pinned to the git ref (a tag such as `ExampleThing-v1.2.3+0`, or `main`
 /// for the latest commit) the caller wants to read.
 ///
 /// The package's version is read from `Project.toml` itself rather than
