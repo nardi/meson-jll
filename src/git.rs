@@ -77,6 +77,38 @@ pub fn looks_like_missing_repository(stderr: &str) -> bool {
     lowercase.contains("not found") || lowercase.contains("could not find")
 }
 
+/// The commit a tag or branch on a remote currently points at, used to key
+/// a content cache against (see `crate::source::GithubSource`): the same
+/// commit always has the same file contents, so caching by commit rather
+/// than by ref name still gets a fresh answer if a branch (unlike a tag)
+/// later moves to point somewhere else.
+pub fn ls_remote_sha(url: &str, reference: &str) -> Result<String> {
+    let output = run(&["ls-remote", url, reference])?;
+    parse_ref_sha(&output).ok_or_else(|| Error::GitRefNotFound {
+        url: url.to_string(),
+        reference: reference.to_string(),
+    })
+}
+
+/// Picks the commit SHA out of `git ls-remote`'s output for a single ref.
+/// An annotated tag advertises both the tag object's own SHA and,
+/// dereferenced (suffixed `^{}`), the commit it points at. The dereferenced
+/// commit is the one wanted, and is preferred if present; a lightweight tag
+/// or a branch has no such line, and its own SHA already is a commit.
+fn parse_ref_sha(output: &str) -> Option<String> {
+    let mut first_seen: Option<String> = None;
+    for line in output.lines() {
+        let mut columns = line.split('\t');
+        let sha = columns.next()?;
+        let reference = columns.next()?;
+        if reference.ends_with("^{}") {
+            return Some(sha.to_string());
+        }
+        first_seen.get_or_insert_with(|| sha.to_string());
+    }
+    first_seen
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,5 +157,25 @@ def456\trefs/tags/ExampleThing-v1.2.3+0^{}
         assert!(!looks_like_missing_repository(
             "fatal: unable to access: connection timed out"
         ));
+    }
+
+    #[test]
+    fn a_lightweight_tag_or_branch_sha_is_used_directly() {
+        let output = "abc123\trefs/heads/main\n";
+        assert_eq!(parse_ref_sha(output), Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn an_annotated_tag_prefers_the_dereferenced_commit() {
+        let output = "\
+tagobject123\trefs/tags/ExampleThing-v1.2.3+0
+commit456\trefs/tags/ExampleThing-v1.2.3+0^{}
+";
+        assert_eq!(parse_ref_sha(output), Some("commit456".to_string()));
+    }
+
+    #[test]
+    fn no_matching_ref_is_none() {
+        assert_eq!(parse_ref_sha(""), None);
     }
 }

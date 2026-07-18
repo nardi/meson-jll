@@ -17,11 +17,11 @@
 //! entire repository listing (roughly 700 repositories, split across many
 //! pages) just to read off names.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::cache;
 use crate::error::{Error, Result};
 use crate::git;
 use crate::source::fetch_url;
@@ -260,40 +260,32 @@ fn extract_package_names(entries: &[TreeEntry]) -> Vec<String> {
 }
 
 /// Where [`yggdrasil_package_names`] caches its result, in the OS's own
-/// cache directory (for example `~/.cache/meson-jll` on Linux), not inside
-/// any one project, since the result has nothing to do with a particular
-/// project. `None` if the OS cache directory cannot be determined, in which
-/// case caching is simply skipped.
+/// cache directory, not inside any one project, since the result has
+/// nothing to do with a particular project. `None` if the OS cache
+/// directory cannot be determined, in which case caching is simply
+/// skipped. Unlike the archive cache in [`crate::source`], this is a single
+/// file rather than one per key, since there is only ever one Yggdrasil
+/// package list worth having at a time, and a new one fully supersedes the
+/// last.
 fn cache_file_path() -> Option<PathBuf> {
-    dirs::cache_dir().map(|dir| dir.join("meson-jll").join("yggdrasil-packages.json"))
+    cache::cache_dir().map(|dir| dir.join("yggdrasil-packages.json"))
 }
 
 /// Reads a cached package list from `path`, returning it only if it was
-/// computed from the same commit as `sha`. Any failure to read or parse the
-/// cache (missing file, corrupt JSON, a stale format) is treated as a plain
-/// cache miss rather than an error, since the cache is a pure optimization.
+/// computed from the same commit as `sha`.
 fn read_cached_package_list(sha: &str, path: &Path) -> Option<Vec<String>> {
-    let text = fs::read_to_string(path).ok()?;
-    let cached: CachedPackageList = serde_json::from_str(&text).ok()?;
+    let cached: CachedPackageList = cache::read_json(path)?;
     (cached.sha == sha).then_some(cached.names)
 }
 
-/// Best-effort cache write. Failing to create the cache directory or write
-/// the file is silently ignored, since the cache only ever speeds up a
-/// later call and must never turn into a hard error on its own.
+/// Writes a cached package list to `path`, keyed by the commit it was
+/// computed from.
 fn write_cached_package_list(sha: &str, names: &[String], path: &Path) {
-    if let Some(parent) = path.parent() {
-        if fs::create_dir_all(parent).is_err() {
-            return;
-        }
-    }
     let cached = CachedPackageList {
         sha: sha.to_string(),
         names: names.to_vec(),
     };
-    if let Ok(text) = serde_json::to_string(&cached) {
-        let _ = fs::write(path, text);
-    }
+    cache::write_json(path, &cached);
 }
 
 #[cfg(test)]

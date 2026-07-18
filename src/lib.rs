@@ -2,6 +2,7 @@
 //!
 #![doc = include_str!("../docs/index.md")]
 
+mod cache;
 pub mod error;
 pub mod generate;
 mod git;

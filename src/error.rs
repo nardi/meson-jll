@@ -34,6 +34,25 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    /// A repository's archive could not be read as a gzipped tarball, or one
+    /// of its entries could not be read.
+    #[error("could not read the archive at {url}: {source}")]
+    ReadArchive {
+        url: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// A path was requested from a [`crate::source::GithubSource`] that its
+    /// downloaded archive did not contain.
+    #[error("{path} was not found in {owner}/{repo}@{git_ref}")]
+    MissingArchiveEntry {
+        owner: String,
+        repo: String,
+        git_ref: String,
+        path: String,
+    },
+
     /// A response from the GitHub API could not be parsed as the JSON shape
     /// this tool expects.
     #[error("could not parse the response from {url} as JSON: {source}")]
@@ -154,6 +173,11 @@ pub enum Error {
     /// A git command ran but exited with a failure.
     #[error("git {} failed: {stderr}", args.join(" "))]
     GitFailed { args: Vec<String>, stderr: String },
+
+    /// `git ls-remote` succeeded but reported no ref matching the one asked
+    /// for.
+    #[error("{reference} was not found on {url}")]
+    GitRefNotFound { url: String, reference: String },
 
     /// A `pins` entry named a version that is not actually published for
     /// that package.
