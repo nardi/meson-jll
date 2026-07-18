@@ -52,7 +52,9 @@ struct DownloadRaw {
 /// Yggdrasil more often than this tool's platform list is updated.
 pub fn parse(text: &str, package_name: &str) -> Result<Vec<Platform>> {
     let document: HashMap<String, Vec<ArtifactEntryRaw>> =
-        toml::from_str(text).map_err(|source| Error::ParseArtifactsToml { source })?;
+        toml::from_str(text).map_err(|source| Error::ParseArtifactsToml {
+            source: Box::new(source),
+        })?;
 
     let entries = document.get(package_name).cloned().unwrap_or_default();
     if entries.is_empty() {
