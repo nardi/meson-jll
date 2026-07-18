@@ -57,16 +57,31 @@ pub fn version_from_tag(tag: &str) -> Option<&str> {
     tag.rsplit_once("-v").map(|(_, version)| version)
 }
 
+#[derive(Debug, Deserialize)]
+struct ReleaseResponse {
+    tag_name: String,
+}
+
 /// The most recently published version of a JLL package.
 ///
-/// This takes the first tag the GitHub API returns. GitHub does not
-/// formally guarantee tag ordering, but in practice returns them by
-/// creation date, most recent first, which matches how Yggdrasil publishes
-/// JLL releases.
+/// Reads GitHub's own "latest release" endpoint, which the API defines as
+/// the most recently created non-prerelease, non-draft release, rather than
+/// listing every tag and taking the first: one small request for one
+/// release instead of a full (up to 100-tag) page just to read off its
+/// first entry.
 pub fn latest_version(owner: &str, repo: &str) -> Result<String> {
-    let tags = list_tags(owner, repo)?;
-    tags.iter()
-        .find_map(|tag| version_from_tag(tag))
+    let url = format!("https://api.github.com/repos/{owner}/{repo}/releases/latest");
+    let body = fetch_url(&url).map_err(|error| match error {
+        Error::Fetch { source, .. } if matches!(source.as_ref(), ureq::Error::Status(404, _)) => {
+            Error::NoPlatforms {
+                name: repo.to_string(),
+            }
+        }
+        other => other,
+    })?;
+    let response: ReleaseResponse =
+        serde_json::from_str(&body).map_err(|source| Error::ParseJson { url, source })?;
+    version_from_tag(&response.tag_name)
         .map(String::from)
         .ok_or_else(|| Error::NoPlatforms {
             name: repo.to_string(),
