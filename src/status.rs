@@ -1,81 +1,89 @@
-//! Discovering which JLL wraps are already installed in a project.
+//! Discovering which JLL packages are already installed in a project.
 //!
-//! Every selector wrap this tool writes carries a one-line marker comment
-//! recording the package name and the version it was generated from (see
-//! [`crate::generate::context::SelectorWrapContext`]). That marker is all
-//! `status` and `update` need to find what is already installed, without
-//! re-fetching anything.
+//! This reads [`crate::lock::LockFile`] directly. Earlier versions of this
+//! tool had no lockfile and scanned each generated wrap file for a marker
+//! comment instead; that marker is still written (see
+//! [`crate::generate::context::SelectorWrapContext`]) as a human-readable
+//! note, but is no longer what `status` or the install command layer read.
 
-use std::fs;
 use std::path::Path;
 
-/// One JLL wrap already present in a project's `subprojects/` directory.
+use crate::error::Result;
+use crate::install::LOCK_FILE_NAME;
+use crate::lock::LockFile;
+
+/// One JLL package already recorded in a project's lockfile.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledPackage {
     pub name: String,
     pub version: String,
 }
 
-/// Scans `subprojects_dir` for selector wraps this tool generated, by
-/// looking for the marker comment left in each one. Returns an empty list
-/// if the directory does not exist yet.
-pub fn installed_packages(subprojects_dir: &Path) -> Vec<InstalledPackage> {
-    let Ok(entries) = fs::read_dir(subprojects_dir) else {
-        return Vec::new();
-    };
+/// Reads every package recorded in `subprojects_dir`'s lockfile, sorted by
+/// name. Returns an empty list if no lockfile exists yet.
+pub fn installed_packages(subprojects_dir: &Path) -> Result<Vec<InstalledPackage>> {
+    let lock_path = subprojects_dir.join(LOCK_FILE_NAME);
+    let lock = LockFile::read(&lock_path)?;
 
-    entries
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "wrap")
+    let mut packages: Vec<InstalledPackage> = lock
+        .packages
+        .into_iter()
+        .map(|package| InstalledPackage {
+            name: package.name,
+            version: package.version,
         })
-        .filter_map(|entry| {
-            let contents = fs::read_to_string(entry.path()).ok()?;
-            parse_marker(contents.lines().next()?)
-        })
-        .collect()
-}
-
-/// Parses a marker line of the form
-/// `# meson-jll: name=ExampleThing version=1.2.3+0`.
-fn parse_marker(line: &str) -> Option<InstalledPackage> {
-    let rest = line.strip_prefix("# meson-jll: ")?;
-    let mut name = None;
-    let mut version = None;
-    for field in rest.split_whitespace() {
-        if let Some(value) = field.strip_prefix("name=") {
-            name = Some(value.to_string());
-        } else if let Some(value) = field.strip_prefix("version=") {
-            version = Some(value.to_string());
-        }
-    }
-    Some(InstalledPackage {
-        name: name?,
-        version: version?,
-    })
+        .collect();
+    packages.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(packages)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lock::LockedPackage;
 
     #[test]
-    fn parses_a_marker_line() {
-        let package = parse_marker("# meson-jll: name=ExampleThing version=1.2.3+0").unwrap();
-        assert_eq!(package.name, "ExampleThing");
-        assert_eq!(package.version, "1.2.3+0");
+    fn reads_packages_from_the_lockfile_sorted_by_name() {
+        let directory = tempfile::tempdir().unwrap();
+        let lock_path = directory.path().join(LOCK_FILE_NAME);
+
+        let lock = LockFile {
+            roots: Default::default(),
+            packages: vec![
+                LockedPackage {
+                    name: "OtherThing".to_string(),
+                    version: "5.8.0+0".to_string(),
+                    dependencies: vec![],
+                },
+                LockedPackage {
+                    name: "ExampleThing".to_string(),
+                    version: "1.2.3+0".to_string(),
+                    dependencies: vec!["OtherThing".to_string()],
+                },
+            ],
+        };
+        lock.write(&lock_path).unwrap();
+
+        let installed = installed_packages(directory.path()).unwrap();
+        assert_eq!(
+            installed,
+            vec![
+                InstalledPackage {
+                    name: "ExampleThing".to_string(),
+                    version: "1.2.3+0".to_string(),
+                },
+                InstalledPackage {
+                    name: "OtherThing".to_string(),
+                    version: "5.8.0+0".to_string(),
+                },
+            ]
+        );
     }
 
     #[test]
-    fn rejects_an_unrelated_line() {
-        assert_eq!(parse_marker("[wrap-file]"), None);
-    }
-
-    #[test]
-    fn rejects_a_line_missing_a_field() {
-        assert_eq!(parse_marker("# meson-jll: name=ExampleThing"), None);
+    fn no_lockfile_reads_as_no_installed_packages() {
+        let directory = tempfile::tempdir().unwrap();
+        let installed = installed_packages(directory.path()).unwrap();
+        assert!(installed.is_empty());
     }
 }
