@@ -8,6 +8,7 @@ mod git;
 pub mod install;
 pub mod jll;
 pub mod lock;
+pub mod progress;
 pub mod registry;
 pub mod resolve;
 pub mod source;

@@ -14,6 +14,7 @@ use crate::error::Result;
 use crate::generate;
 use crate::jll;
 use crate::lock::{LockFile, LockedPackage};
+use crate::progress::Progress;
 use crate::registry;
 use crate::resolve::{self, GithubCatalog, ResolvedPackage, DEFAULT_MAX_ITERATIONS};
 use crate::source::{CustomSource, GithubSource};
@@ -39,12 +40,18 @@ pub const LOCK_FILE_NAME: &str = "meson-jll.lock";
 /// rise if `name`'s new requirements need a higher version of it.
 ///
 /// Returns the `(name, version)` of every package written, sorted by name.
+///
+/// `on_progress` is called with each step's progress as it happens (see
+/// [`Progress`]), so a caller can report it. It is called synchronously and
+/// carries no timing information of its own, since network-bound work
+/// happens between calls, not during one.
 pub fn install(
     name: &str,
     version: Option<&str>,
     custom_url: Option<&str>,
     subprojects_dir: &Path,
     force: bool,
+    on_progress: &mut impl FnMut(Progress),
 ) -> Result<Vec<(String, String)>> {
     let bare_name = if custom_url.is_some() {
         // A custom URL is not necessarily hosted under `JuliaBinaryWrappers`,
@@ -120,7 +127,13 @@ pub fn install(
             .collect();
         required.extend(custom_package.dependencies.iter().cloned());
 
-        let mut resolved = resolve::resolve(&required, &pins, &catalog, DEFAULT_MAX_ITERATIONS)?;
+        let mut resolved = resolve::resolve(
+            &required,
+            &pins,
+            &catalog,
+            DEFAULT_MAX_ITERATIONS,
+            |resolving_name| on_progress(Progress::Resolving(resolving_name)),
+        )?;
         resolved.insert(
             bare_name.clone(),
             ResolvedPackage {
@@ -129,6 +142,9 @@ pub fn install(
                 dependencies: custom_package.dependencies.clone(),
             },
         );
+        on_progress(Progress::Resolved {
+            count: resolved.len(),
+        });
 
         if previously_locked.get(&bare_name) != Some(&custom_package.version) {
             generate::write_wrap_set(&custom_package, subprojects_dir, force)?;
@@ -139,17 +155,30 @@ pub fn install(
         resolved
     } else {
         let required: Vec<String> = lock.roots.keys().cloned().collect();
-        resolve::resolve(&required, &pins, &catalog, DEFAULT_MAX_ITERATIONS)?
+        let resolved = resolve::resolve(
+            &required,
+            &pins,
+            &catalog,
+            DEFAULT_MAX_ITERATIONS,
+            |resolving_name| on_progress(Progress::Resolving(resolving_name)),
+        )?;
+        on_progress(Progress::Resolved {
+            count: resolved.len(),
+        });
+        resolved
     };
 
     installed.extend(write_wraps_and_lock(
         &resolved,
         lock.roots,
-        &lock_path,
-        subprojects_dir,
-        force,
-        &already_generated,
-        &previously_locked,
+        WriteWrapsContext {
+            lock_path: &lock_path,
+            subprojects_dir,
+            force,
+            already_generated: &already_generated,
+            previously_locked: &previously_locked,
+        },
+        on_progress,
     )?);
 
     Ok(installed)
@@ -166,14 +195,19 @@ pub fn update(
     name: Option<&str>,
     subprojects_dir: &Path,
     force: bool,
+    on_progress: &mut impl FnMut(Progress),
 ) -> Result<Vec<(String, String)>> {
     match name {
-        Some(name) => install(name, None, None, subprojects_dir, force),
-        None => update_all(subprojects_dir, force),
+        Some(name) => install(name, None, None, subprojects_dir, force, on_progress),
+        None => update_all(subprojects_dir, force, on_progress),
     }
 }
 
-fn update_all(subprojects_dir: &Path, force: bool) -> Result<Vec<(String, String)>> {
+fn update_all(
+    subprojects_dir: &Path,
+    force: bool,
+    on_progress: &mut impl FnMut(Progress),
+) -> Result<Vec<(String, String)>> {
     let lock_path = subprojects_dir.join(LOCK_FILE_NAME);
     let mut lock = LockFile::read(&lock_path)?;
     if lock.roots.is_empty() {
@@ -188,7 +222,16 @@ fn update_all(subprojects_dir: &Path, force: bool) -> Result<Vec<(String, String
 
     let required: Vec<String> = lock.roots.keys().cloned().collect();
     let catalog = GithubCatalog;
-    let resolved = resolve::resolve(&required, &HashMap::new(), &catalog, DEFAULT_MAX_ITERATIONS)?;
+    let resolved = resolve::resolve(
+        &required,
+        &HashMap::new(),
+        &catalog,
+        DEFAULT_MAX_ITERATIONS,
+        |resolving_name| on_progress(Progress::Resolving(resolving_name)),
+    )?;
+    on_progress(Progress::Resolved {
+        count: resolved.len(),
+    });
 
     // Every root is moved to latest with no pins at all, so any version a
     // root was previously pinned to no longer applies. Reset every pin to
@@ -200,11 +243,14 @@ fn update_all(subprojects_dir: &Path, force: bool) -> Result<Vec<(String, String
     write_wraps_and_lock(
         &resolved,
         lock.roots,
-        &lock_path,
-        subprojects_dir,
-        force,
-        &HashSet::new(),
-        &previously_locked,
+        WriteWrapsContext {
+            lock_path: &lock_path,
+            subprojects_dir,
+            force,
+            already_generated: &HashSet::new(),
+            previously_locked: &previously_locked,
+        },
+        on_progress,
     )
 }
 
@@ -218,7 +264,11 @@ fn update_all(subprojects_dir: &Path, force: bool) -> Result<Vec<(String, String
 /// that way is re-fetched from the `JuliaBinaryWrappers` organization here
 /// instead. Regenerating such a project from its lock alone is not yet
 /// supported.
-pub fn install_locked(subprojects_dir: &Path, force: bool) -> Result<Vec<(String, String)>> {
+pub fn install_locked(
+    subprojects_dir: &Path,
+    force: bool,
+    on_progress: &mut impl FnMut(Progress),
+) -> Result<Vec<(String, String)>> {
     let lock_path = subprojects_dir.join(LOCK_FILE_NAME);
     let lock = LockFile::read(&lock_path)?;
 
@@ -227,6 +277,7 @@ pub fn install_locked(subprojects_dir: &Path, force: bool) -> Result<Vec<(String
 
     let mut installed = Vec::new();
     for package in packages {
+        on_progress(Progress::Writing(&package.name));
         let full_package = load_at_locked_version(&package.name, &package.version)?;
         generate::write_wrap_set(&full_package, subprojects_dir, force)?;
         installed.push((full_package.name, full_package.version));
@@ -234,29 +285,47 @@ pub fn install_locked(subprojects_dir: &Path, force: bool) -> Result<Vec<(String
     Ok(installed)
 }
 
+/// The parts of [`write_wraps_and_lock`]'s job that stay the same across
+/// its callers, grouped so the function itself does not need one parameter
+/// per field.
+struct WriteWrapsContext<'a> {
+    lock_path: &'a Path,
+    subprojects_dir: &'a Path,
+    force: bool,
+    /// Skips names whose wrap set a caller already wrote (used for a
+    /// `--url` root, generated straight from its custom source before this
+    /// runs, so it is not fetched a second time through the registry).
+    already_generated: &'a HashSet<String>,
+    /// Skips names whose resolved version is unchanged from what was
+    /// already locked: resolving always considers the whole graph, so
+    /// without this, every install or update would try to rewrite every
+    /// already-installed package's files too, which would fail outright on
+    /// an unrelated, unchanged package's wrap already existing unless
+    /// `--force` were given.
+    previously_locked: &'a HashMap<String, String>,
+}
+
 /// Regenerates every resolved package's wrap set and writes the lockfile.
 ///
-/// `already_generated` skips names whose wrap set a caller already wrote
-/// (used for a `--url` root, generated straight from its custom source
-/// before this runs, so it is not fetched a second time through the
-/// registry). `previously_locked` skips names whose resolved version is
-/// unchanged from what was already locked: resolving always considers the
-/// whole graph, so without this, every install or update would try to
-/// rewrite every already-installed package's files too, which would fail
-/// outright on an unrelated, unchanged package's wrap already existing
-/// unless `--force` were given. The lockfile is written only after every
-/// wrap set that needed writing has been generated successfully, so a
-/// failure partway through never leaves the lock claiming a version whose
-/// wrap was never actually written.
+/// See [`WriteWrapsContext`] for what `already_generated` and
+/// `previously_locked` skip. The lockfile is written only after every wrap
+/// set that needed writing has been generated successfully, so a failure
+/// partway through never leaves the lock claiming a version whose wrap was
+/// never actually written.
 fn write_wraps_and_lock(
     resolved: &HashMap<String, ResolvedPackage>,
     roots: std::collections::BTreeMap<String, String>,
-    lock_path: &Path,
-    subprojects_dir: &Path,
-    force: bool,
-    already_generated: &HashSet<String>,
-    previously_locked: &HashMap<String, String>,
+    context: WriteWrapsContext,
+    on_progress: &mut impl FnMut(Progress),
 ) -> Result<Vec<(String, String)>> {
+    let WriteWrapsContext {
+        lock_path,
+        subprojects_dir,
+        force,
+        already_generated,
+        previously_locked,
+    } = context;
+
     let mut installed = Vec::new();
     let mut package_names: Vec<&String> = resolved.keys().collect();
     package_names.sort();
@@ -269,6 +338,7 @@ fn write_wraps_and_lock(
         if previously_locked.get(package_name) == Some(&resolved_package.version) {
             continue;
         }
+        on_progress(Progress::Writing(package_name));
         let full_package = load_at_locked_version(package_name, &resolved_package.version)?;
         generate::write_wrap_set(&full_package, subprojects_dir, force)?;
         installed.push((full_package.name, full_package.version));

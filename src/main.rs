@@ -6,9 +6,12 @@
 //! documentation (`cargo doc`) for the full user guide.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
+use indicatif::{ProgressBar, ProgressStyle};
 
+use meson_jll::progress::Progress;
 use meson_jll::{install, registry, status};
 
 #[derive(Parser)]
@@ -123,6 +126,78 @@ fn run_search(term: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Drives a spinner and prints a timed "<Verb> N packages in <elapsed>"
+/// summary per phase (resolving, then writing), the same way `uv` reports
+/// its own install phases, from the [`Progress`] events a library call
+/// reports as it runs.
+///
+/// A [`Progress::Resolved`] event marks the boundary between the two
+/// phases: it prints the resolve phase's summary immediately (suspending
+/// the spinner so the line is not overwritten), then starts timing the
+/// write phase that follows. [`Self::finish`] prints whichever phase was
+/// running when the library call returned (the only phase there is, for an
+/// offline `--locked` regeneration that never resolves anything).
+struct PhaseReporter {
+    bar: ProgressBar,
+    phase_start: Instant,
+}
+
+impl PhaseReporter {
+    fn new(initial_message: &'static str) -> Self {
+        let bar = ProgressBar::new_spinner();
+        bar.set_style(
+            ProgressStyle::with_template("{spinner:.cyan} {msg}")
+                .expect("spinner template is valid"),
+        );
+        bar.enable_steady_tick(Duration::from_millis(80));
+        bar.set_message(initial_message);
+        Self {
+            bar,
+            phase_start: Instant::now(),
+        }
+    }
+
+    fn report(&mut self, event: Progress) {
+        match event {
+            Progress::Resolving(name) => {
+                self.bar
+                    .set_message(format!("Resolving versions... ({name})"));
+            }
+            Progress::Resolved { count } => {
+                let elapsed = self.phase_start.elapsed();
+                self.bar.suspend(|| {
+                    println!("Resolved {count} packages in {}", format_elapsed(elapsed))
+                });
+                self.phase_start = Instant::now();
+                self.bar.set_message("Generating wraps...");
+            }
+            Progress::Writing(name) => {
+                self.bar
+                    .set_message(format!("Generating wraps... ({name})"));
+            }
+        }
+    }
+
+    /// Prints the final phase's summary line and clears the spinner.
+    /// `verb` names what the whole operation just did (for example
+    /// `"Installed"`).
+    fn finish(self, verb: &str, count: usize) {
+        let elapsed = self.phase_start.elapsed();
+        self.bar.finish_and_clear();
+        println!("{verb} {count} packages in {}", format_elapsed(elapsed));
+    }
+}
+
+/// Formats a duration the way `uv` does: milliseconds under a second,
+/// seconds with two decimal places above it.
+fn format_elapsed(elapsed: Duration) -> String {
+    if elapsed.as_secs() >= 1 {
+        format!("{:.2}s", elapsed.as_secs_f64())
+    } else {
+        format!("{}ms", elapsed.as_millis())
+    }
+}
+
 fn run_install(
     name: Option<&str>,
     version: Option<&str>,
@@ -132,10 +207,19 @@ fn run_install(
     subprojects_dir: &Path,
 ) -> anyhow::Result<()> {
     let installed = if locked {
-        install::install_locked(subprojects_dir, force)?
+        let mut reporter = PhaseReporter::new("Regenerating wraps...");
+        let mut on_progress = |event: Progress| reporter.report(event);
+        let installed = install::install_locked(subprojects_dir, force, &mut on_progress)?;
+        reporter.finish("Installed", installed.len());
+        installed
     } else {
         let name = name.expect("clap requires a name unless --locked is set");
-        install::install(name, version, url, subprojects_dir, force)?
+        let mut reporter = PhaseReporter::new("Resolving versions...");
+        let mut on_progress = |event: Progress| reporter.report(event);
+        let installed =
+            install::install(name, version, url, subprojects_dir, force, &mut on_progress)?;
+        reporter.finish("Installed", installed.len());
+        installed
     };
     for (name, version) in installed {
         println!("Installed {name} {version}");
@@ -182,7 +266,10 @@ fn run_status(subprojects_dir: &Path) -> anyhow::Result<()> {
 }
 
 fn run_update(name: Option<&str>, subprojects_dir: &Path) -> anyhow::Result<()> {
-    let installed = install::update(name, subprojects_dir, true)?;
+    let mut reporter = PhaseReporter::new("Resolving versions...");
+    let mut on_progress = |event: Progress| reporter.report(event);
+    let installed = install::update(name, subprojects_dir, true, &mut on_progress)?;
+    reporter.finish("Updated", installed.len());
     for (name, version) in installed {
         println!("updated {name} to {version}");
     }

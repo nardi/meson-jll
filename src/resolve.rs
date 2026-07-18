@@ -146,11 +146,18 @@ impl Catalog for GithubCatalog {
 /// package satisfies the constraints accumulated against it, and
 /// [`Error::ResolutionDidNotConverge`] if the fixed point is not reached
 /// within `max_iterations` passes.
+///
+/// `on_progress` is called with each package's bare name the first time it
+/// is visited in a pass, right before the (network-bound) catalog lookups
+/// for it, so a caller can report which package resolution is currently
+/// waiting on. It may be called more than once for the same name across
+/// passes, so it is meant for a live status update, not a per-package tally.
 pub fn resolve(
     required: &[String],
     pins: &HashMap<String, String>,
     catalog: &impl Catalog,
     max_iterations: u32,
+    mut on_progress: impl FnMut(&str),
 ) -> Result<HashMap<String, ResolvedPackage>> {
     let required_names: HashSet<String> = required.iter().cloned().collect();
 
@@ -169,6 +176,7 @@ pub fn resolve(
             if !seen_this_pass.insert(name.clone()) {
                 continue;
             }
+            on_progress(&name);
 
             let available = match version_cache.get(&name) {
                 Some(versions) => versions.clone(),
@@ -354,8 +362,14 @@ mod tests {
             .with_version("S", "1.5.0+0", vec![]);
 
         let required = vec!["A".to_string()];
-        let resolved =
-            resolve(&required, &HashMap::new(), &catalog, DEFAULT_MAX_ITERATIONS).unwrap();
+        let resolved = resolve(
+            &required,
+            &HashMap::new(),
+            &catalog,
+            DEFAULT_MAX_ITERATIONS,
+            |_| {},
+        )
+        .unwrap();
 
         assert_eq!(version_of(&resolved, "A"), "1.0.0+0");
         // S's floor from A is "1.0.0", and the highest available clears it.
@@ -374,8 +388,14 @@ mod tests {
             .with_version("S", "1.0.0+0", vec![]);
 
         let required = vec!["A".to_string(), "B".to_string()];
-        let error =
-            resolve(&required, &HashMap::new(), &catalog, DEFAULT_MAX_ITERATIONS).unwrap_err();
+        let error = resolve(
+            &required,
+            &HashMap::new(),
+            &catalog,
+            DEFAULT_MAX_ITERATIONS,
+            |_| {},
+        )
+        .unwrap_err();
         assert!(matches!(error, Error::NoSatisfyingVersion { name } if name == "S"));
     }
 
@@ -390,8 +410,14 @@ mod tests {
             .with_version("S", "1.2.0+0", vec![]);
 
         let required = vec!["A".to_string(), "B".to_string()];
-        let resolved =
-            resolve(&required, &HashMap::new(), &catalog, DEFAULT_MAX_ITERATIONS).unwrap();
+        let resolved = resolve(
+            &required,
+            &HashMap::new(),
+            &catalog,
+            DEFAULT_MAX_ITERATIONS,
+            |_| {},
+        )
+        .unwrap();
 
         assert_eq!(version_of(&resolved, "A"), "1.0.0+0");
         assert_eq!(version_of(&resolved, "B"), "1.0.0+0");
@@ -414,7 +440,7 @@ mod tests {
         let mut pins = HashMap::new();
         pins.insert("A".to_string(), "1.0.0+0".to_string());
 
-        let resolved = resolve(&required, &pins, &catalog, DEFAULT_MAX_ITERATIONS).unwrap();
+        let resolved = resolve(&required, &pins, &catalog, DEFAULT_MAX_ITERATIONS, |_| {}).unwrap();
 
         assert_eq!(version_of(&resolved, "A"), "1.0.0+0");
         assert_eq!(version_of(&resolved, "C"), "1.0.0+0");
@@ -429,10 +455,22 @@ mod tests {
             .with_version("S", "2.0.0+0", vec![]);
 
         let required = vec!["A".to_string()];
-        let update_result =
-            resolve(&required, &HashMap::new(), &catalog, DEFAULT_MAX_ITERATIONS).unwrap();
-        let install_latest_result =
-            resolve(&required, &HashMap::new(), &catalog, DEFAULT_MAX_ITERATIONS).unwrap();
+        let update_result = resolve(
+            &required,
+            &HashMap::new(),
+            &catalog,
+            DEFAULT_MAX_ITERATIONS,
+            |_| {},
+        )
+        .unwrap();
+        let install_latest_result = resolve(
+            &required,
+            &HashMap::new(),
+            &catalog,
+            DEFAULT_MAX_ITERATIONS,
+            |_| {},
+        )
+        .unwrap();
 
         assert_eq!(
             version_of(&update_result, "A"),
@@ -448,8 +486,14 @@ mod tests {
     fn an_unknown_required_package_is_an_error() {
         let catalog = TestCatalog::new();
         let required = vec!["DoesNotExist".to_string()];
-        let error =
-            resolve(&required, &HashMap::new(), &catalog, DEFAULT_MAX_ITERATIONS).unwrap_err();
+        let error = resolve(
+            &required,
+            &HashMap::new(),
+            &catalog,
+            DEFAULT_MAX_ITERATIONS,
+            |_| {},
+        )
+        .unwrap_err();
         assert!(matches!(error, Error::UnknownJllPackage { name } if name == "DoesNotExist"));
     }
 
@@ -460,7 +504,8 @@ mod tests {
         let mut pins = HashMap::new();
         pins.insert("A".to_string(), "9.9.9+0".to_string());
 
-        let error = resolve(&required, &pins, &catalog, DEFAULT_MAX_ITERATIONS).unwrap_err();
+        let error =
+            resolve(&required, &pins, &catalog, DEFAULT_MAX_ITERATIONS, |_| {}).unwrap_err();
         assert!(
             matches!(error, Error::UnknownPin { name, pin } if name == "A" && pin == "9.9.9+0")
         );
