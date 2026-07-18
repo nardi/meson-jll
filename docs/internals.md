@@ -92,8 +92,90 @@ of their overlays. Each file is produced from a compiled template in
 [`generate::context`](crate::generate::context) that has already worked out
 every value the template needs, so the templates stay free of logic.
 
-Dependencies on other JLLs are handled by walking the graph:
-[`install::install_recursive`](crate::install::install_recursive) generates
-a package and then generates each of its JLL dependencies the same way,
-skipping any it has already written so a shared dependency is generated only
-once.
+Dependencies on other JLLs are not generated one at a time as they are
+discovered. They go through the version resolver first, covered next, which
+decides one consistent version for every package in the graph before
+anything is written.
+
+## Resolving versions
+
+A JLL declares version bounds on its own JLL dependencies in a `[compat]`
+section of `Project.toml`, the same way any Julia package does. For example
+`SuiteSparse_jll` declares `libblastrampoline_jll = "5.8.0"`, meaning it
+needs at least that version. Simply always taking the latest available
+version of every dependency, ignoring `[compat]` entirely, mostly works only
+because these bounds are almost always floors and latest almost always
+clears one. It silently breaks on an upper bound, or when latest drifts
+below a declared floor.
+
+`meson-jll` avoids that by resolving the whole dependency graph to one
+mutually compatible set of versions before generating anything, the same
+way Julia's own `Pkg` resolver keeps an environment consistent, and by
+recording the result in a lockfile so the same versions are used again next
+time. This section covers the algorithm, [`crate::lockfile`] specifies the
+file it is recorded in.
+
+### The fixed-point solver
+
+[`resolve::resolve`](crate::resolve::resolve) is a fixed-point computation,
+not a backtracking or SAT solver. It repeatedly resolves each package to the
+highest available version satisfying every `[compat]` range accumulated
+against it so far from everything that depends on it, and repeats until a
+full pass changes nothing. Constraints only ever accumulate over a resolve
+and are never retracted: the result can be slightly more conservative than
+strictly necessary, since a constraint from a branch that later turns out
+irrelevant still applies, but it is never wrong, because a version
+satisfying a superset of the real constraints always satisfies the real ones
+too.
+
+This is enough for JLL dependency graphs specifically because they are
+shallow and generated mechanically from a single upstream build, so
+genuinely conflicting compat ranges are rare, unlike the deep, independently
+authored graphs a general-purpose package manager has to solve for. A
+resolve that does not settle within its iteration budget raises an error
+rather than guessing, so a real conflict is always reported rather than
+silently papered over.
+
+The one seam to the network is
+[`resolve::Catalog`](crate::resolve::Catalog), a trait with two methods,
+"what versions exist" and "what does this version depend on". Its real
+implementation, [`resolve::GithubCatalog`](crate::resolve::GithubCatalog),
+answers both from GitHub: release tags for the first, and each tag's
+`Project.toml` for the second. Kept behind a trait and used through a
+generic parameter rather than a trait object, matching
+[`source::Source`](crate::source::Source), so the solver itself is unit
+tested against an in-memory catalog with no network involved.
+
+As a small illustration of the compat parsing this relies on, a bare version
+in a compat specifier is a caret range: it accepts anything from that
+version up to, but excluding, the next version that would change its
+leftmost nonzero component.
+
+```rust
+use meson_jll::version::{CompatSpecifier, Version};
+
+let specifier = CompatSpecifier::parse("5.8.0");
+assert!(specifier.contains(Version::parse("5.9.0").unwrap()));
+assert!(!specifier.contains(Version::parse("6.0.0").unwrap()));
+```
+
+### Updating, or installing specific versions
+
+The solver itself is stateless: given the same `required` names, `pins`, and
+catalog, it always resolves to the same versions. The behavior that makes
+installing or updating one package leave every unrelated package exactly
+where it was locked lives one level up, in
+[`install::install`](crate::install::install), which builds `pins` from the
+project's existing lockfile before ever calling the solver:
+
+- Every locked package **outside** the dependency closure (in the old lock)
+  of the package being installed or updated is pinned to its current locked
+  version, so it cannot move.
+- Everything **inside** that closure is left free, so it can rise if the
+  refreshed package's new requirements need a higher version of it.
+
+`update <name>` is exactly `install <name>` with no version pinned, since
+installing with no version already means "take the latest available". A
+bare `update`, with no name, refreshes every root at once with no pins at
+all. See [`crate::lockfile`] for the `[[package]]` `dependencies` edges this
+closure is computed from.
