@@ -164,10 +164,20 @@ fn write_selector_overlay(
         .platforms
         .iter()
         .any(|resolved| resolved.platform.triplet.libc.is_some());
-    let has_abi_options = package.platforms.iter().any(|resolved| {
-        resolved.platform.triplet.cxxstring_abi.is_some()
-            || resolved.platform.triplet.libgfortran_version.is_some()
-    });
+    // Computed independently, matching `write_options` below exactly: a
+    // JLL can split by only one of these two axes, and `meson.options`
+    // only declares the option for the axis that actually applies, so the
+    // template must guard each `get_option` call on its own flag rather
+    // than a single combined one (which used to cause a `get_option` call
+    // for an option that was never declared).
+    let has_cxxstring_abi = package
+        .platforms
+        .iter()
+        .any(|resolved| resolved.platform.triplet.cxxstring_abi.is_some());
+    let has_libgfortran = package
+        .platforms
+        .iter()
+        .any(|resolved| resolved.platform.triplet.libgfortran_version.is_some());
 
     let platforms = package
         .platforms
@@ -182,7 +192,8 @@ fn write_selector_overlay(
         name: &package.name,
         dependency_variable: dependency_variable_name.to_string(),
         needs_libc_probe,
-        has_abi_options,
+        has_cxxstring_abi,
+        has_libgfortran,
         platforms,
     };
     let rendered = render(&context, "selector_overlay.jinja")?;

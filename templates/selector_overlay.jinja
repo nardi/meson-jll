@@ -13,9 +13,12 @@ if host_machine.system() == 'linux'
   endif
 endif
 {% endif %}
-{% if has_abi_options %}
+{% if has_cxxstring_abi %}
 # Declared in the sibling meson.options this package generated.
 cxxstring_abi = get_option('cxxstring_abi')
+{% endif %}
+{% if has_libgfortran %}
+# Declared in the sibling meson.options this package generated.
 libgfortran_version = get_option('libgfortran_version')
 {% endif %}
 

@@ -86,7 +86,15 @@ pub struct SelectorOverlayContext<'a> {
     pub name: &'a str,
     pub dependency_variable: String,
     pub needs_libc_probe: bool,
-    pub has_abi_options: bool,
+    /// Whether at least one platform splits by C++ standard library ABI,
+    /// matching `OptionsContext::has_cxxstring_abi`: `meson.options` only
+    /// declares `cxxstring_abi` when this is set, so `get_option` for it
+    /// must be guarded by the same condition, not lumped in with
+    /// `has_libgfortran`.
+    pub has_cxxstring_abi: bool,
+    /// Whether at least one platform splits by Fortran runtime version, the
+    /// `libgfortran_version` counterpart to `has_cxxstring_abi` above.
+    pub has_libgfortran: bool,
     pub platforms: Vec<PlatformSelector>,
 }
 
@@ -129,5 +137,25 @@ mod tests {
     #[test]
     fn link_name_handles_a_versioned_soname() {
         assert_eq!(link_name_from_path("lib/libexample.so.3"), "example");
+    }
+
+    /// Regression test: the selector overlay used to guard both
+    /// `get_option` calls on one combined flag, so a package split only by
+    /// `libgfortran_version` (no `cxxstring_abi` variants at all) still
+    /// generated a `get_option('cxxstring_abi')` call, one `meson.options`
+    /// never declares that option for, failing at Meson configure time.
+    #[test]
+    fn only_declares_get_option_for_axes_the_package_actually_splits_by() {
+        let context = SelectorOverlayContext {
+            name: "ExampleThing",
+            dependency_variable: "examplething_dep".to_string(),
+            needs_libc_probe: false,
+            has_cxxstring_abi: false,
+            has_libgfortran: true,
+            platforms: Vec::new(),
+        };
+        let rendered = context.render().unwrap();
+        assert!(rendered.contains("get_option('libgfortran_version')"));
+        assert!(!rendered.contains("get_option('cxxstring_abi')"));
     }
 }
