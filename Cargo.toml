@@ -1,6 +1,6 @@
 [package]
 name = "meson-jll"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 description = "Generate Meson wraps from Julia JLL packages"
 license = "LICENSE.md"
