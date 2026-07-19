@@ -13,6 +13,7 @@ use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use meson_jll::progress::Progress;
+use meson_jll::version::Version;
 use meson_jll::{install, registry, status};
 
 #[derive(Parser)]
@@ -276,10 +277,14 @@ fn run_info(name: &str) -> anyhow::Result<()> {
     registry::canonical_bare_name(name)?;
     let (owner, repo) = registry::resolve(name);
     let tags = registry::list_tags(&owner, &repo)?;
-    for (tag, _sha) in tags {
-        if let Some(version) = registry::version_from_tag(&tag) {
-            println!("{version}");
-        }
+    let mut versions: Vec<(&str, Version)> = tags
+        .iter()
+        .filter_map(|(tag, _sha)| registry::version_from_tag(tag))
+        .filter_map(|raw| Version::parse(raw).ok().map(|version| (raw, version)))
+        .collect();
+    versions.sort_by(|left, right| right.1.cmp(&left.1));
+    for (raw, _version) in versions {
+        println!("{raw}");
     }
     Ok(())
 }
