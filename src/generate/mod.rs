@@ -38,8 +38,11 @@ pub const EMPTY_TAR_FILENAME: &str = "_meson-jll-empty.tar";
 /// which is the standard end-of-archive marker and nothing else.
 const EMPTY_TAR_BYTES: [u8; 1024] = [0u8; 1024];
 
-/// The name a Windows triplet overlay writes [`DLL_TO_LIB_SCRIPT`] under,
-/// next to its own `meson.build`.
+/// The name [`DLL_TO_LIB_SCRIPT`] is written under, directly in
+/// `packagefiles/`, shared by every Windows triplet overlay the same way
+/// [`EMPTY_TAR_FILENAME`] is: written once, referenced by every consumer
+/// via a relative path up from its own overlay directory, rather than
+/// duplicated into each one.
 const DLL_TO_LIB_FILENAME: &str = "dll_to_lib.py";
 
 /// A small, generic Python script that regenerates an MSVC-compatible
@@ -133,6 +136,14 @@ pub fn write_wrap_set(package: &JllPackage, subprojects_dir: &Path, force: bool)
     write_selector_overlay(package, &dependency_variable_name, subprojects_dir, force)?;
     write_options(package, subprojects_dir, force)?;
 
+    if package
+        .platforms
+        .iter()
+        .any(|resolved| resolved.platform.triplet.os == Os::Windows)
+    {
+        write_dll_to_lib_script(subprojects_dir)?;
+    }
+
     for resolved in &package.platforms {
         write_binary_wrap(package, resolved, subprojects_dir, force)?;
         write_triplet_overlay(
@@ -165,6 +176,25 @@ fn write_empty_tar(subprojects_dir: &Path) -> Result<()> {
         })?;
     }
     fs::write(&path, EMPTY_TAR_BYTES).map_err(|source| Error::WriteFile { path, source })
+}
+
+/// Writes the shared `dll_to_lib.py`, if it is not already there. See
+/// [`DLL_TO_LIB_FILENAME`] for why this lives directly under
+/// `packagefiles/` instead of inside each triplet overlay.
+fn write_dll_to_lib_script(subprojects_dir: &Path) -> Result<()> {
+    let path = subprojects_dir
+        .join("packagefiles")
+        .join(DLL_TO_LIB_FILENAME);
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| Error::CreateDirectory {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    fs::write(&path, DLL_TO_LIB_SCRIPT).map_err(|source| Error::WriteFile { path, source })
 }
 
 fn write_selector_wrap(package: &JllPackage, subprojects_dir: &Path, force: bool) -> Result<()> {
@@ -226,22 +256,6 @@ fn write_triplet_overlay(
 
     let is_windows = resolved.platform.triplet.os == Os::Windows;
     let overlay_dir = subprojects_dir.join("packagefiles").join(&project_name);
-    if is_windows {
-        // Only meaningful alongside a Windows overlay, and harmless to
-        // regenerate unconditionally like the shared empty tar: its
-        // content never changes.
-        let script_path = overlay_dir.join(DLL_TO_LIB_FILENAME);
-        if let Some(parent) = script_path.parent() {
-            fs::create_dir_all(parent).map_err(|source| Error::CreateDirectory {
-                path: parent.to_path_buf(),
-                source,
-            })?;
-        }
-        fs::write(&script_path, DLL_TO_LIB_SCRIPT).map_err(|source| Error::WriteFile {
-            path: script_path,
-            source,
-        })?;
-    }
 
     let mut jll_dependencies: Vec<&str> = package.dependencies.iter().map(String::as_str).collect();
     if is_windows
