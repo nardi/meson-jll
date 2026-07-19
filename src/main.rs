@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
+use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use meson_jll::progress::Progress;
@@ -170,19 +171,18 @@ impl PhaseReporter {
         match event {
             Progress::Resolving(name) => {
                 self.bar
-                    .set_message(format!("Resolving versions... ({name})"));
+                    .set_message(format!("Resolving versions... ({})", style(name).bold()));
             }
             Progress::Resolved { count } => {
                 let elapsed = self.phase_start.elapsed();
-                self.bar.suspend(|| {
-                    println!("Resolved {count} packages in {}", format_elapsed(elapsed))
-                });
+                self.bar
+                    .suspend(|| println!("{}", phase_summary("Resolved", count, elapsed)));
                 self.phase_start = Instant::now();
                 self.bar.set_message("Generating wraps...");
             }
             Progress::Writing(name) => {
                 self.bar
-                    .set_message(format!("Generating wraps... ({name})"));
+                    .set_message(format!("Generating wraps... ({})", style(name).bold()));
             }
         }
     }
@@ -193,8 +193,29 @@ impl PhaseReporter {
     fn finish(self, verb: &str, count: usize) {
         let elapsed = self.phase_start.elapsed();
         self.bar.finish_and_clear();
-        println!("{verb} {count} packages in {}", format_elapsed(elapsed));
+        println!("{}", phase_summary(verb, count, elapsed));
     }
+}
+
+/// Formats a phase summary line the way `uv` does: the verb in bold green,
+/// the count left plain, and the elapsed time dimmed.
+fn phase_summary(verb: &str, count: usize, elapsed: Duration) -> String {
+    format!(
+        "{} {count} packages in {}",
+        style(verb).green().bold(),
+        style(format_elapsed(elapsed)).dim()
+    )
+}
+
+/// Prints one installed/updated/synced package the way `uv` lists its own
+/// resolved packages: a green `+`, the name in bold, and the version dimmed.
+fn print_package_line(name: &str, version: &str) {
+    println!(
+        "{} {} {}",
+        style("+").green().bold(),
+        style(name).bold(),
+        style(version).dim()
+    );
 }
 
 /// Formats a duration the way `uv` does: milliseconds under a second,
@@ -231,7 +252,7 @@ fn run_install(
         installed
     };
     for (name, version) in installed {
-        println!("Installed {name} {version}");
+        print_package_line(&name, &version);
     }
     Ok(())
 }
@@ -246,7 +267,7 @@ fn run_sync(subprojects_dir: &Path) -> anyhow::Result<()> {
     let installed = install::install_locked(subprojects_dir, true, &mut on_progress)?;
     reporter.finish("Synced", installed.len());
     for (name, version) in installed {
-        println!("Synced {name} {version}");
+        print_package_line(&name, &version);
     }
     Ok(())
 }
@@ -271,17 +292,22 @@ fn run_status(subprojects_dir: &Path) -> anyhow::Result<()> {
     }
     for package in installed {
         let (owner, repo) = registry::resolve(&package.name);
+        let name = style(&package.name).bold();
+        let version = style(&package.version).dim();
         match registry::latest_version(&owner, &repo) {
             Ok(latest) if latest == package.version => {
-                println!("{} {} (up to date)", package.name, package.version);
+                println!("{name} {version} {}", style("(up to date)").green());
             }
             Ok(latest) => {
-                println!("{} {} (latest: {latest})", package.name, package.version);
+                println!(
+                    "{name} {version} {}",
+                    style(format!("(latest: {latest})")).yellow()
+                );
             }
             Err(error) => {
                 println!(
-                    "{} {} (could not check latest: {error})",
-                    package.name, package.version
+                    "{name} {version} {}",
+                    style(format!("(could not check latest: {error})")).red()
                 );
             }
         }
@@ -295,7 +321,7 @@ fn run_update(name: Option<&str>, subprojects_dir: &Path) -> anyhow::Result<()> 
     let installed = install::update(name, subprojects_dir, true, &mut on_progress)?;
     reporter.finish("Updated", installed.len());
     for (name, version) in installed {
-        println!("updated {name} to {version}");
+        print_package_line(&name, &version);
     }
     Ok(())
 }

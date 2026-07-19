@@ -636,6 +636,7 @@ dependencies = [
  "anyhow",
  "askama",
  "clap",
+ "console",
  "dirs",
  "flate2",
  "indicatif",

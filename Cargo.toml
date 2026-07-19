@@ -27,6 +27,7 @@ thiserror = "1"
 anyhow = "1"
 dirs = "5"
 indicatif = "0.17"
+console = "0.15"
 tar = "0.4"
 flate2 = "1"
 
