@@ -18,9 +18,9 @@ use crate::error::{Error, Result};
 use crate::jll::triplet::Os;
 use crate::jll::{JllPackage, ResolvedPlatform};
 use context::{
-    dependency_variable, link_name_from_path, BinaryWrapContext, LibraryProductView,
-    OptionsContext, PlatformSelector, SelectorOverlayContext, SelectorWrapContext,
-    TripletOverlayContext,
+    dependency_variable, link_name_from_path, normalize_path, BinaryWrapContext,
+    LibraryProductView, OptionsContext, PlatformSelector, SelectorOverlayContext,
+    SelectorWrapContext, TripletOverlayContext,
 };
 
 /// The name of the placeholder archive every selector wrap's
@@ -220,6 +220,7 @@ fn write_triplet_overlay(
         .map(|product| LibraryProductView {
             variable: product.variable.clone(),
             link_name: link_name_from_path(&product.path),
+            path: normalize_path(&product.path),
         })
         .collect();
 
@@ -242,11 +243,26 @@ fn write_triplet_overlay(
         })?;
     }
 
+    let mut jll_dependencies: Vec<&str> = package.dependencies.iter().map(String::as_str).collect();
+    if is_windows
+        && package.name != crate::install::WINDOWS_RUNTIME_SHIM_PACKAGE
+        && !jll_dependencies.contains(&crate::install::WINDOWS_RUNTIME_SHIM_PACKAGE)
+    {
+        // Referenced here purely so Meson actually configures, builds, and
+        // installs this subproject at all: nothing else in the generated
+        // wrap set otherwise calls dependency('CompilerSupportLibraries'),
+        // and a subproject nothing references never runs, regardless of
+        // whether meson-jll already wrote its wrap files to disk. See
+        // `crate::install::WINDOWS_RUNTIME_SHIM_PACKAGE` for why every
+        // Windows platform needs it.
+        jll_dependencies.push(crate::install::WINDOWS_RUNTIME_SHIM_PACKAGE);
+    }
+
     let context = TripletOverlayContext {
         name: &project_name,
         dependency_variable: dependency_variable_name.to_string(),
         library_products,
-        jll_dependencies: package.dependencies.iter().map(String::as_str).collect(),
+        jll_dependencies,
         namespaced_include_dir: package.name.to_lowercase(),
         is_windows,
         msvc_machine: resolved
@@ -255,6 +271,7 @@ fn write_triplet_overlay(
             .arch
             .msvc_machine()
             .unwrap_or_default(),
+        install_dir_option: if is_windows { "bindir" } else { "libdir" },
     };
     let rendered = render(&context, "triplet_overlay.jinja")?;
     let path = overlay_dir.join("meson.build");

@@ -14,6 +14,20 @@ pub fn dependency_variable(name: &str) -> String {
     format!("{}_dep", name.to_lowercase())
 }
 
+/// Normalises a JLL library path to forward slashes, for example turning
+/// `bin\\libexample.dll` into `bin/libexample.dll`.
+///
+/// The wrapper script parser does not decode Julia string escapes (see
+/// `crate::jll::wrappers`), so a Windows path arrives with the doubled
+/// backslash still literally doubled: two backslash characters, standing
+/// for the one real separator Julia's own string would contain. Replacing
+/// that exact two-character sequence first, before falling back to
+/// replacing any single stray backslash, avoids turning it into two
+/// forward slashes instead of one.
+pub fn normalize_path(path: &str) -> String {
+    path.replace("\\\\", "/").replace('\\', "/")
+}
+
 /// Derives the plain library name Meson's `cc.find_library()` expects (for
 /// example `example`) from a JLL library path such as `lib/libexample.so`
 /// or `bin\\libexample.dll`.
@@ -27,11 +41,8 @@ pub fn dependency_variable(name: &str) -> String {
 /// `lib<name>.dylib` on the platforms where the runtime and link-time
 /// files are one and the same), so the overlay always searches `lib/`
 /// regardless of platform, and only the name is taken from this path.
-/// A Windows path is doubled-backslash in the Julia source and read here
-/// as two literal backslash characters, normalised to a forward slash
-/// before taking the final path component.
 pub fn link_name_from_path(path: &str) -> String {
-    let normalized = path.replace('\\', "/");
+    let normalized = normalize_path(path);
     let file_name = normalized.rsplit('/').next().unwrap_or(&normalized);
     let before_first_dot = file_name.split('.').next().unwrap_or(file_name);
     before_first_dot
@@ -116,6 +127,13 @@ pub struct SelectorOverlayContext<'a> {
 pub struct LibraryProductView {
     pub variable: String,
     pub link_name: String,
+    /// The path Julia's own wrapper script declared for this library,
+    /// relative to the extracted tarball, normalised to forward slashes
+    /// (see [`link_name_from_path`]). Kept as-is, versioned soname and
+    /// all, rather than reconstructed from `link_name`, so the file
+    /// `install_data()` installs is always the exact one that actually
+    /// exists on disk.
+    pub path: String,
 }
 
 /// Renders a per-triplet overlay's `meson.build`, which turns the extracted
@@ -151,6 +169,13 @@ pub struct TripletOverlayContext<'a> {
     /// architecture (see [`crate::jll::triplet::Arch::msvc_machine`]).
     /// Only meaningful when `is_windows` is set.
     pub msvc_machine: &'a str,
+    /// The Meson built-in directory option every library this platform
+    /// declares is unconditionally `install_data()`'d to: `bindir` on
+    /// Windows (where a DLL's own directory is searched at load time, the
+    /// same as an executable's), `libdir` everywhere else (where a shared
+    /// object already installed alongside a consumer is found via the
+    /// consumer's own rpath).
+    pub install_dir_option: &'static str,
 }
 
 #[cfg(test)]
@@ -171,9 +196,24 @@ mod tests {
 
     #[test]
     fn link_name_handles_a_windows_backslash_path() {
-        // Julia's wrapper source doubles the backslash, so it is read here
-        // as two literal backslash characters.
-        assert_eq!(link_name_from_path("bin\\libexample.dll"), "example");
+        // Julia's wrapper source doubles the backslash, so the parser (which
+        // does not decode escapes) reads this as two literal backslash
+        // characters, not one: "bin\\\\libexample.dll" here is Rust's own
+        // escaping of that two-character sequence.
+        assert_eq!(link_name_from_path("bin\\\\libexample.dll"), "example");
+    }
+
+    #[test]
+    fn normalize_path_collapses_a_doubled_backslash_to_one_slash() {
+        assert_eq!(
+            normalize_path("bin\\\\libexample.dll"),
+            "bin/libexample.dll"
+        );
+    }
+
+    #[test]
+    fn normalize_path_leaves_a_forward_slash_path_unchanged() {
+        assert_eq!(normalize_path("lib/libexample.so"), "lib/libexample.so");
     }
 
     #[test]

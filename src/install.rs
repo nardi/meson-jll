@@ -23,6 +23,19 @@ use crate::source::{CustomSource, GithubSource};
 /// `crate::lockfile` for the format written there.
 pub const LOCK_FILE_NAME: &str = "meson-jll.lock";
 
+/// A JLL's Windows binaries are MinGW-w64 built, and depend at runtime on
+/// MinGW's own runtime DLLs (`libwinpthread-1.dll`, `libgcc_s_seh-1.dll`,
+/// and, for Fortran code, `libgfortran`), which this package provides.
+/// Nothing declares this as a real dependency anywhere: it is not in any
+/// JLL's `Project.toml` `[deps]` (confirmed against SuiteSparse_jll's,
+/// which lists none), since it is a property of the toolchain every
+/// Windows JLL happens to be built with, not of the package itself. Every
+/// resolve includes it unconditionally so `dependency('CompilerSupportLibraries')`
+/// always has a wrap to find, regardless of whether the specific JLLs
+/// being installed turn out to need it, the same way every platform's
+/// wraps are always generated even though only one is ever downloaded.
+pub(crate) const WINDOWS_RUNTIME_SHIM_PACKAGE: &str = "CompilerSupportLibraries";
+
 /// Installs or refreshes `name` in `subprojects_dir`, and every JLL package
 /// it depends on.
 ///
@@ -126,6 +139,7 @@ pub fn install(
             .cloned()
             .collect();
         required.extend(custom_package.dependencies.iter().cloned());
+        required.push(WINDOWS_RUNTIME_SHIM_PACKAGE.to_string());
 
         let mut resolved = resolve::resolve(
             &required,
@@ -154,7 +168,8 @@ pub fn install(
 
         resolved
     } else {
-        let required: Vec<String> = lock.roots.keys().cloned().collect();
+        let mut required: Vec<String> = lock.roots.keys().cloned().collect();
+        required.push(WINDOWS_RUNTIME_SHIM_PACKAGE.to_string());
         let resolved = resolve::resolve(
             &required,
             &pins,
@@ -220,7 +235,8 @@ fn update_all(
         .map(|package| (package.name.clone(), package.version.clone()))
         .collect();
 
-    let required: Vec<String> = lock.roots.keys().cloned().collect();
+    let mut required: Vec<String> = lock.roots.keys().cloned().collect();
+    required.push(WINDOWS_RUNTIME_SHIM_PACKAGE.to_string());
     let catalog = GithubCatalog;
     let resolved = resolve::resolve(
         &required,

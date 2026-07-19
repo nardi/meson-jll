@@ -38,10 +38,10 @@ dll_to_lib = files('dll_to_lib.py')
 # declares, using the exact path Julia itself records for it.
 {% for lib in library_products %}
 {% if is_windows %}
-if is_msvc and python3.found() and fs.is_file('bin/lib{{ lib.link_name }}.dll') and not fs.is_file('lib/{{ lib.link_name }}.lib')
+if is_msvc and python3.found() and fs.is_file('{{ lib.path }}') and not fs.is_file('lib/{{ lib.link_name }}.lib')
   {{ lib.variable }}_import_lib = custom_target(
     '{{ lib.link_name }}-msvc-import-lib',
-    input: 'bin/lib{{ lib.link_name }}.dll',
+    input: '{{ lib.path }}',
     output: '{{ lib.link_name }}.lib',
     command: [python3, dll_to_lib, '@INPUT@', '@OUTPUT@', '{{ msvc_machine }}'],
   )
@@ -60,20 +60,34 @@ endif
 {{ dep }}_dep = dependency('{{ dep }}')
 {% endfor %}
 
+# Installed unconditionally, this package's own files, no different from
+# `library('z', ..., install: true)` in an ordinary Meson project (WrapDB's
+# own zlib wrap does exactly this). A consumer whose own target also
+# installs to the same, default prefix (true for a plain
+# `executable(..., install: true)` or `python.extension_module(..., install:
+# true)`) gets every one of these collocated with it by a normal
+# `meson install`, with nothing beyond that one line to write.
+{% for lib in library_products %}
+install_data('{{ lib.path }}', install_dir: get_option('{{ install_dir_option }}'))
+{% endfor %}
+
 {% if is_windows %}
-# Every DLL a consumer needs on its own load path at runtime: this
-# platform's own, plus (transitively) every JLL dependency's, read back off
-# each dependency() the same way this list is itself exposed below. A
+# Windows has no rpath-like mechanism, so unlike the other platforms above,
+# landing in the standard install directory only helps a consumer that
+# also happens to install to that exact same directory (true for a plain
+# executable, not for a Python extension module, which installs to
+# site-packages instead). For that case, every DLL a consumer needs on its
+# own load path at runtime is additionally exposed here: this platform's
+# own, plus (transitively) every JLL dependency's, read back off each
+# dependency() the same way this list is itself built. A
 # `declare_dependency()` `variables:` entry must be a plain string, not a
 # file list, so this is a single string joining every absolute path with
-# ';'. A consumer that needs its build output to run without setting up
-# its own DLL search path (for example a Python extension module, so a
-# plain `import` works) reads this back with
+# ';'. A consumer reads it back with
 # `dependency('Name').get_variable('runtime_dlls').split(';')` and
-# `install_data()`s the result next to its own target.
+# `install_data()`s the result next to its own target itself.
 runtime_dlls = ''
 {% for lib in library_products %}
-runtime_dlls += meson.current_source_dir() / 'bin' / 'lib{{ lib.link_name }}.dll' + ';'
+runtime_dlls += meson.current_source_dir() / '{{ lib.path }}' + ';'
 {% endfor %}
 {% for dep in jll_dependencies %}
 runtime_dlls += {{ dep }}_dep.get_variable('runtime_dlls', default_value: '')
