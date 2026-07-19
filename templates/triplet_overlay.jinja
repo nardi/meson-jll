@@ -60,37 +60,20 @@ endif
 {{ dep }}_dep = dependency('{{ dep }}')
 {% endfor %}
 
-# Installed unconditionally, this package's own files, no different from
-# `library('z', ..., install: true)` in an ordinary Meson project (WrapDB's
-# own zlib wrap does exactly this). A consumer whose own target also
-# installs to the same, default prefix (true for a plain
-# `executable(..., install: true)` or `python.extension_module(..., install:
-# true)`) gets every one of these collocated with it by a normal
-# `meson install`, with nothing beyond that one line to write.
-{% for lib in library_products %}
-install_data('{{ lib.path }}', install_dir: get_option('{{ install_dir_option }}'))
-{% endfor %}
-
+# Install this platform's own runtime libraries, the same as
+# `library('z', ..., install: true)` in an ordinary Meson project. They go
+# to libdir, which is where meson-python folds a wheel's bundled shared
+# libraries from (into `.<project>.mesonpy.libs`), and where an rpath entry
+# points on the platforms that have one. On Windows the whole `bin`
+# directory is installed rather than only the declared products, because
+# the MinGW runtime DLLs those depend on (`libwinpthread-1.dll` and friends,
+# provided by CompilerSupportLibraries) ship there without ever being
+# declared as products of their own, and would otherwise be left out.
 {% if is_windows %}
-# Windows has no rpath-like mechanism, so unlike the other platforms above,
-# landing in the standard install directory only helps a consumer that
-# also happens to install to that exact same directory (true for a plain
-# executable, not for a Python extension module, which installs to
-# site-packages instead). For that case, every DLL a consumer needs on its
-# own load path at runtime is additionally exposed here: this platform's
-# own, plus (transitively) every JLL dependency's, read back off each
-# dependency() the same way this list is itself built. A
-# `declare_dependency()` `variables:` entry must be a plain string, not a
-# file list, so this is a single string joining every absolute path with
-# ';'. A consumer reads it back with
-# `dependency('Name').get_variable('runtime_dlls').split(';')` and
-# `install_data()`s the result next to its own target itself.
-runtime_dlls = ''
+install_subdir('bin', install_dir: get_option('libdir'), strip_directory: true)
+{% else %}
 {% for lib in library_products %}
-runtime_dlls += meson.current_source_dir() / '{{ lib.path }}' + ';'
-{% endfor %}
-{% for dep in jll_dependencies %}
-runtime_dlls += {{ dep }}_dep.get_variable('runtime_dlls', default_value: '')
+install_data('{{ lib.path }}', install_dir: get_option('libdir'))
 {% endfor %}
 {% endif %}
 
@@ -104,7 +87,4 @@ runtime_dlls += {{ dep }}_dep.get_variable('runtime_dlls', default_value: '')
     {{ dep }}_dep,
 {% endfor %}
   ],
-{% if is_windows %}
-  variables: {'runtime_dlls': runtime_dlls},
-{% endif %}
 )

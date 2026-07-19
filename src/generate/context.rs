@@ -169,13 +169,6 @@ pub struct TripletOverlayContext<'a> {
     /// architecture (see [`crate::jll::triplet::Arch::msvc_machine`]).
     /// Only meaningful when `is_windows` is set.
     pub msvc_machine: &'a str,
-    /// The Meson built-in directory option every library this platform
-    /// declares is unconditionally `install_data()`'d to: `bindir` on
-    /// Windows (where a DLL's own directory is searched at load time, the
-    /// same as an executable's), `libdir` everywhere else (where a shared
-    /// object already installed alongside a consumer is found via the
-    /// consumer's own rpath).
-    pub install_dir_option: &'static str,
 }
 
 #[cfg(test)]

@@ -271,7 +271,6 @@ fn write_triplet_overlay(
             .arch
             .msvc_machine()
             .unwrap_or_default(),
-        install_dir_option: if is_windows { "bindir" } else { "libdir" },
     };
     let rendered = render(&context, "triplet_overlay.jinja")?;
     let path = overlay_dir.join("meson.build");
