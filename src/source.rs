@@ -43,7 +43,7 @@ pub trait Source {
 /// many files end up being read from it.
 ///
 /// The downloaded contents are also cached on disk, keyed by the commit
-/// `git_ref` currently points at (see [`Self::load_archive`]), so asking
+/// `git_ref` currently points at, so asking
 /// for the same tag again, in a later `meson-jll` invocation entirely,
 /// never re-downloads it. A tag's commit never changes, so this cache
 /// entry is kept forever once written; a branch's commit can, so a moving

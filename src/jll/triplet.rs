@@ -256,7 +256,7 @@ impl Triplet {
     /// file's name, only its own naming scheme from [`Self::identifier`].
     ///
     /// The two agree on everything except the operating system word (see
-    /// [`Os::julia_identifier`]) and, when this JLL splits a platform by
+    /// `Os::julia_identifier`) and, when this JLL splits a platform by
     /// Fortran runtime version, on how much of it is used: this tool's own
     /// naming keeps the full `Artifacts.toml` value (for example `5.0.0`),
     /// but Julia's wrapper filenames (and, as it happens, its release

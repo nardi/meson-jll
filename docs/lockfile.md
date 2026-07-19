@@ -1,8 +1,8 @@
 # The lockfile format
 
-`meson-jll` records what it has installed in a lockfile at
-`subprojects/meson-jll.lock`, next to the generated wraps. This page is the
-formal specification of that file.
+`meson-jll` records what it has installed in a lockfile at `meson-jll.lock`
+in the project root, next to `meson.build`. This page is the formal
+specification of that file.
 
 The lockfile is written and read only by `meson-jll`. It should not be
 edited by hand: hand edits are not validated against `[compat]` bounds the

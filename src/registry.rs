@@ -4,7 +4,7 @@
 //! Every JLL published through Yggdrasil ends up as a repository under the
 //! `JuliaBinaryWrappers` GitHub organization, named `<Name>_jll.jl`.
 //! Per-package lookups (a repository's tags, the highest of them) go
-//! through git's own protocol (see [`crate::git`]) rather than the GitHub
+//! through git's own protocol (see `crate::git`) rather than the GitHub
 //! REST API, since a JLL with several dependencies makes one such lookup
 //! per dependency, and the API's 60-requests-per-hour unauthenticated rate
 //! limit does not leave much room for that. Enumerating every JLL that
@@ -47,9 +47,9 @@ pub fn resolve(name: &str) -> (String, String) {
 ///
 /// A repository that does not exist at all reads as an empty list, the
 /// same outcome as a real JLL with zero releases, rather than a hard
-/// error (see [`crate::git::ls_remote_tags`]), since a name reached only
+/// error (see `crate::git::ls_remote_tags`), since a name reached only
 /// transitively that turns out unpublished should not abort a whole
-/// resolve (see [`crate::resolve::GithubCatalog::versions`]).
+/// resolve (see [`crate::resolve::Catalog::versions`]).
 pub fn list_tags(owner: &str, repo: &str) -> Result<Vec<(String, String)>> {
     let url = format!("https://github.com/{owner}/{repo}.git");
     git::ls_remote_tags(&url)
@@ -182,7 +182,7 @@ struct CachedPackageList {
 /// The result is cached locally, keyed by Yggdrasil's current `master`
 /// commit, so a repeat call in an unchanged Yggdrasil costs one small
 /// request (checking the current commit) instead of refetching the whole
-/// tree. See [`read_cached_package_list`] and [`write_cached_package_list`].
+/// tree. See `read_cached_package_list` and `write_cached_package_list`.
 pub fn yggdrasil_package_names() -> Result<Vec<String>> {
     let sha = fetch_yggdrasil_master_sha()?;
     let cache_path = cache_file_path();

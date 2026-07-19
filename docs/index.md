@@ -112,6 +112,73 @@ $ meson-jll update SuiteSparse
 updated SuiteSparse to 7.13.0+0
 ```
 
+### `sync`
+
+`sync` regenerates every wrap straight from the committed lockfile, without
+resolving anything or contacting the registry for versions. It is the
+command to run after a fresh checkout of a project that commits its
+`meson-jll.lock` but not the generated wraps (see "Version control" below):
+
+```shell
+$ meson-jll sync
+Synced SuiteSparse 7.12.1+0
+Synced libblastrampoline 5.11.2+2
+```
+
+## Version control
+
+`meson-jll` writes into two places: `meson-jll.lock` in the project root,
+and a set of files under `subprojects/`. On top of those, `meson setup`
+later adds more files under `subprojects/` of its own (downloaded archives
+and the source trees it extracts from them). There are two suggested
+approaches to include this in version control.
+
+In either case, you should always commit `meson-jll.lock`. It is the record
+of exactly which JLL versions the project resolved to, and everything else
+can be regenerated from it.
+
+**Approach one: commit the lockfile only.** Ignore the whole `subprojects/`
+directory. A collaborator, or a CI job, runs `meson-jll sync` after checking
+out, which regenerates every wrap from the lockfile before building. This
+keeps the repository small and free of generated files, at the cost of one
+extra command before the first build.
+
+```gitignore
+# Commit meson-jll.lock (in the project root), regenerate the rest.
+subprojects/
+```
+
+The extra command can be folded into `meson setup` itself, so a collaborator
+never has to remember it: call `meson-jll sync` from a `run_command()` at the
+top of the root `meson.build`, before anything reads from `subprojects/`.
+
+```meson
+run_command('meson-jll', 'sync', check: true)
+```
+
+This makes `meson setup` self-sufficient straight after a fresh checkout, at
+the cost of requiring `meson-jll` itself to be on `PATH` wherever the project
+is configured, including CI.
+
+**Approach two: commit the generated wraps too.** Commit the `.wrap` files
+and the `packagefiles/` overlay directory `meson-jll` generates, so the
+project builds straight after checkout with no `sync` step. Ignore only the
+files `meson setup` adds on its own: the download cache and the extracted
+source trees.
+
+```gitignore
+# Ignore only what meson itself downloads and extracts.
+subprojects/packagecache/
+subprojects/*/
+!subprojects/packagefiles/
+```
+
+The `subprojects/*/` line ignores every extracted source directory (each
+platform's tarball is unpacked into its own directory there), while the
+following line keeps the `packagefiles/` overlays `meson-jll` generated.
+The individual `.wrap` files are not directories, so they are committed
+either way.
+
 ## Where to next
 
 - [Examples](crate::examples): a worked C program and a meson-python
@@ -119,4 +186,4 @@ updated SuiteSparse to 7.13.0+0
 - [Internals](crate::internals): how the generated wrap set is shaped, the
   three-step generation process, and how versions are resolved.
 - [Lockfile format](crate::lockfile): the formal specification of
-  `subprojects/meson-jll.lock`.
+  `meson-jll.lock`.
