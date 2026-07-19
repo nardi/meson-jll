@@ -161,11 +161,17 @@ struct CachedPackageList {
 /// recipe for.
 ///
 /// Yggdrasil (`JuliaPackaging/Yggdrasil`) is the monorepo every JLL is built
-/// from. Each buildable package gets its own directory, directly under a
-/// single-uppercase-letter bucket directory, for example
-/// `Z/Zlib/build_tarballs.jl` for the `Zlib` package (a deeper directory
-/// like `Z/Zlib/Zlib@1.2.12` is a per-version build recipe subdirectory, not
-/// a separate package, and is excluded). Reading this one directory tree
+/// from. Every package's build recipe lives three segments deep: a
+/// single-uppercase-letter bucket directory, a container directory that
+/// groups related recipes, and either a flat `build_tarballs.jl` (for a
+/// container with just one recipe, for example `Z/Zlib/build_tarballs.jl`
+/// for `Zlib`) or one `<Name>@<version>` subdirectory per recipe (for
+/// example `O/OpenBLAS/OpenBLAS32@0.3.32`, which names the `OpenBLAS32`
+/// package, distinct from `OpenBLAS` itself even though both recipes live
+/// under the same `O/OpenBLAS` container). The container directory's own
+/// name is never used as a package name: it is not one, only a grouping,
+/// and does not necessarily match any recipe inside it. Reading this one
+/// directory tree
 /// answers "what JLL packages exist" in a single request, at a size (a few
 /// thousand entries, a few megabytes) nowhere near GitHub's git-tree API
 /// truncation limit, which is far cheaper than paginating the
@@ -234,19 +240,30 @@ fn is_bucket_letter(segment: &str) -> bool {
             .is_some_and(|letter| letter.is_ascii_uppercase())
 }
 
-/// Pulls the bare package names out of a Yggdrasil tree listing: every
-/// directory exactly two path segments deep, whose first segment is a
-/// bucket letter, sorted and deduplicated.
+/// Pulls the bare package names out of a Yggdrasil tree listing.
+///
+/// A name comes from one of two shapes, both exactly three path segments
+/// deep under a bucket letter, never from the container directory's own
+/// name (see [`yggdrasil_package_names`] for why that would be wrong):
+/// a `<Name>@<version>` recipe subdirectory names `Name`, and a flat
+/// `build_tarballs.jl` names the container it directly sits in. Sorted and
+/// deduplicated, since one container can hold several same-named recipes
+/// across versions, or several differently named ones.
 fn extract_package_names(entries: &[TreeEntry]) -> Vec<String> {
     let mut names: Vec<String> = entries
         .iter()
-        .filter(|entry| entry.entry_type == "tree")
-        .filter_map(
-            |entry| match entry.path.split('/').collect::<Vec<_>>().as_slice() {
-                [bucket, name] if is_bucket_letter(bucket) => Some((*name).to_string()),
+        .filter_map(|entry| {
+            let segments: Vec<&str> = entry.path.split('/').collect();
+            match (entry.entry_type.as_str(), segments.as_slice()) {
+                ("tree", [bucket, _container, recipe]) if is_bucket_letter(bucket) => recipe
+                    .split_once('@')
+                    .map(|(name, _version)| name.to_string()),
+                ("blob", [bucket, container, "build_tarballs.jl"]) if is_bucket_letter(bucket) => {
+                    Some((*container).to_string())
+                }
                 _ => None,
-            },
-        )
+            }
+        })
         .collect();
     names.sort();
     names.dedup();
@@ -323,20 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn extracts_package_directories_directly_under_a_bucket_letter() {
-        let entries = vec![
-            tree_entry("Z/Zlib", "tree"),
-            tree_entry("Z/ZlibNG", "tree"),
-            tree_entry("A/ABC", "tree"),
-        ];
-        assert_eq!(
-            extract_package_names(&entries),
-            vec!["ABC".to_string(), "Zlib".to_string(), "ZlibNG".to_string()]
-        );
-    }
-
-    #[test]
-    fn excludes_per_version_build_recipe_subdirectories() {
+    fn extracts_package_names_from_versioned_recipe_subdirectories() {
         let entries = vec![
             tree_entry("Z/Zlib", "tree"),
             tree_entry("Z/Zlib/Zlib@1.2.12", "tree"),
@@ -344,6 +348,33 @@ mod tests {
             tree_entry("Z/Zlib/common.jl", "blob"),
         ];
         assert_eq!(extract_package_names(&entries), vec!["Zlib".to_string()]);
+    }
+
+    #[test]
+    fn extracts_package_names_from_a_flat_build_recipe() {
+        let entries = vec![
+            tree_entry("Z/Zlib", "tree"),
+            tree_entry("Z/Zlib/build_tarballs.jl", "blob"),
+        ];
+        assert_eq!(extract_package_names(&entries), vec!["Zlib".to_string()]);
+    }
+
+    #[test]
+    fn a_container_directory_is_never_a_package_name_itself() {
+        // O/OpenBLAS holds recipes for two distinct packages, OpenBLAS and
+        // OpenBLAS32; "OpenBLAS" (the container) is not a package unless a
+        // same-named recipe subdirectory says so.
+        let entries = vec![
+            tree_entry("O/OpenBLAS", "tree"),
+            tree_entry("O/OpenBLAS/OpenBLAS@0.3.32", "tree"),
+            tree_entry("O/OpenBLAS/OpenBLAS@0.3.32/build_tarballs.jl", "blob"),
+            tree_entry("O/OpenBLAS/OpenBLAS32@0.3.32", "tree"),
+            tree_entry("O/OpenBLAS/OpenBLAS32@0.3.32/build_tarballs.jl", "blob"),
+        ];
+        assert_eq!(
+            extract_package_names(&entries),
+            vec!["OpenBLAS".to_string(), "OpenBLAS32".to_string()]
+        );
     }
 
     #[test]
