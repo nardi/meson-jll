@@ -58,6 +58,14 @@ enum Command {
         subprojects_dir: PathBuf,
     },
 
+    /// Regenerate every wrap in the lockfile, for example after a fresh
+    /// checkout where only the committed lockfile is present.
+    Sync {
+        /// The subprojects directory to write into.
+        #[arg(long, default_value = "subprojects")]
+        subprojects_dir: PathBuf,
+    },
+
     /// Show the versions available for a JLL package.
     Info { name: String },
 
@@ -101,6 +109,7 @@ fn main() -> anyhow::Result<()> {
             locked,
             &subprojects_dir,
         ),
+        Command::Sync { subprojects_dir } => run_sync(&subprojects_dir),
         Command::Info { name } => run_info(&name),
         Command::Status { subprojects_dir } => run_status(&subprojects_dir),
         Command::Update {
@@ -223,6 +232,21 @@ fn run_install(
     };
     for (name, version) in installed {
         println!("Installed {name} {version}");
+    }
+    Ok(())
+}
+
+fn run_sync(subprojects_dir: &Path) -> anyhow::Result<()> {
+    // Sync is `install --locked` under a friendlier name: it regenerates
+    // every wrap straight from the committed lockfile, force-overwriting
+    // so the subprojects directory ends up matching the lock exactly,
+    // whatever state (or absence) it started in.
+    let mut reporter = PhaseReporter::new("Regenerating wraps...");
+    let mut on_progress = |event: Progress| reporter.report(event);
+    let installed = install::install_locked(subprojects_dir, true, &mut on_progress)?;
+    reporter.finish("Synced", installed.len());
+    for (name, version) in installed {
+        println!("Synced {name} {version}");
     }
     Ok(())
 }
