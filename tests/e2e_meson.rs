@@ -237,7 +237,7 @@ end
     fs::write(
         consumer_dir.join("meson.build"),
         "project('e2e-demo', 'c')\n\
-         example = dependency('ExampleThing')\n\
+         example = dependency('ExampleThing_jll')\n\
          executable('demo', 'demo.c', dependencies: example)\n",
     )
     .unwrap();

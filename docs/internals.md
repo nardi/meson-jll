@@ -25,6 +25,43 @@ references it, only the platform matching the machine running `meson setup`
 is ever downloaded. The rest of the wrap set sits untouched in
 `subprojects/`, portable across every machine it was generated for.
 
+## The public dependency name
+
+The name a selector wrap provides is the package name with a `_jll` suffix,
+for example `dependency('Zlib_jll')`, not a bare `dependency('Zlib')`. This
+matters because a JLL bundles its own copy of a library that a build machine
+very often already has a system copy of. A bare `dependency('Zlib')` would be
+satisfied by that system copy before the wrap ever ran, and the JLL's own
+binary, the one meant to end up in the wheel, would silently never build. No
+system package advertises itself under a `_jll` name, so the suffixed name can
+only ever resolve to the wrap. The same suffixed name is used both for the
+public dependency a consumer asks for and for the edges between JLLs
+internally. Each `declare_dependency()` also carries the JLL's release version
+as its `version:`, so a consumer can pin it, for example
+`dependency('HiGHS_jll', version: '>=1.15.0')`.
+
+## Installing the runtime libraries
+
+A binary wrap's overlay installs the platform's runtime libraries into
+`libdir`, which is where meson-python folds a wheel's bundled shared libraries
+from. It installs the whole runtime directory, `bin/` on Windows and `lib/` on
+the rest (minus the build-time `cmake/`, `pkgconfig/`, and `gcc/` trees), not
+only the libraries the JLL declares as products. A tarball also ships the
+transitive runtime libraries its products depend on, such as libquadmath behind
+libgfortran, which are never declared as products of their own and so would
+otherwise be missing at load time. Installing the files as they sit in the
+tarball also keeps the versioned name the loader actually records as a
+dependency (`libhighs.so.1`, not the unversioned dev link `libhighs.so`), which
+is the name a wheel needs and the one repair tools like `auditwheel` and
+`delocate` look for.
+
+One rough edge remains on macOS, in meson-python rather than here. When an
+extension links libraries from several JLL subprojects, each contributes its
+own `@loader_path`-relative `LC_RPATH`, and meson-python rewrites all of them to
+the same bundled-libraries path, producing duplicate load commands that recent
+dyld rejects. Until meson-python de-duplicates after rewriting, a consumer that
+hits this can strip the duplicates as a post-repair step.
+
 ## The generation process
 
 Generating a wrap set happens in three steps, each backed by its own part

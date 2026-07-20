@@ -40,4 +40,4 @@ endif
 # the tarball for the matching triplet is ever downloaded.
 sub = subproject('{{ name }}-' + triplet)
 {{ dependency_variable }} = sub.get_variable('{{ dependency_variable }}')
-meson.override_dependency('{{ name }}', {{ dependency_variable }})
+meson.override_dependency('{{ name }}_jll', {{ dependency_variable }})
