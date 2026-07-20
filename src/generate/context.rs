@@ -144,6 +144,12 @@ pub struct TripletOverlayContext<'a> {
     /// The per-triplet subproject name, for example
     /// `ExampleThing-x86_64-linux-gnu`.
     pub name: &'a str,
+    /// The JLL's own release version, for example `1.2.3+0`, emitted as the
+    /// `version:` of the generated `declare_dependency` so a consumer can
+    /// pin it. The full version is kept, build metadata (`+0`) and all,
+    /// since that suffix is the meaningful JLL rebuild counter and Meson's
+    /// version comparison tolerates it.
+    pub version: &'a str,
     pub dependency_variable: String,
     pub library_products: Vec<LibraryProductView>,
     /// The bare names of the other JLL packages this platform links against.

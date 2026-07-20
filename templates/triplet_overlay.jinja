@@ -58,29 +58,48 @@ endif
 {% endfor %}
 
 # Transitive JLL dependencies, resolved the same way this package itself
-# is: through their own selector wrap's [provide] fallback.
+# is: through their own selector wrap's [provide] fallback. The `_jll`
+# suffix on the dependency name is what keeps this from silently binding to
+# a same-named system library (a system zlib exists almost everywhere): no
+# system package advertises itself as `Zlib_jll`, so only the wrap can
+# satisfy it.
 {% for dep in jll_dependencies %}
-{{ dep }}_dep = dependency('{{ dep }}')
+{{ dep }}_dep = dependency('{{ dep }}_jll')
 {% endfor %}
 
 # Install this platform's own runtime libraries, the same as
 # `library('z', ..., install: true)` in an ordinary Meson project. They go
 # to libdir, which is where meson-python folds a wheel's bundled shared
 # libraries from (into `.<project>.mesonpy.libs`), and where an rpath entry
-# points on the platforms that have one. On Windows the whole `bin`
-# directory is installed rather than only the declared products, because
-# the MinGW runtime DLLs those depend on (`libwinpthread-1.dll` and friends,
-# provided by CompilerSupportLibraries) ship there without ever being
-# declared as products of their own, and would otherwise be left out.
+# points on the platforms that have one.
+#
+# The whole runtime directory is installed, not only the declared library
+# products, for the same reason on every platform: a JLL tarball also ships
+# the transitive runtime libraries its own products depend on (libquadmath
+# behind libgfortran, the MinGW libwinpthread-1.dll and friends behind the
+# rest), and those are never declared as products of their own, so listing
+# only the declared ones leaves the loader unable to satisfy them at import
+# time. Installing the versioned files as they sit in the tarball also keeps
+# the name the loader actually records as a dependency (libhighs.so.1, not
+# the unversioned dev link libhighs.so), which is the one a wheel needs.
 {% if is_windows %}
 install_subdir('bin', install_dir: get_option('libdir'), strip_directory: true)
 {% else %}
-{% for lib in library_products %}
-install_data('{{ lib.path }}', install_dir: get_option('libdir'))
-{% endfor %}
+# The runtime shared objects live directly in lib/. The sibling cmake/ and
+# pkgconfig/ trees, and the compiler support files under gcc/, are build-time
+# only and would just bloat the wheel, so they are left out.
+install_subdir(
+  'lib',
+  install_dir: get_option('libdir'),
+  strip_directory: true,
+  exclude_directories: ['cmake', 'pkgconfig', 'gcc'],
+)
 {% endif %}
 
 {{ dependency_variable }} = declare_dependency(
+  # The JLL's own release version, so a consumer can pin it, for example
+  # dependency('HiGHS_jll', version: '>=1.15.0').
+  version: '{{ version }}',
   include_directories: include_dirs,
   dependencies: [
 {% for lib in library_products %}

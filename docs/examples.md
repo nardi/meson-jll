@@ -30,11 +30,15 @@ declares SuiteSparse as an ordinary dependency:
 
 ```python
 project('demo', 'c')
-suitesparse = dependency('SuiteSparse')
+suitesparse = dependency('SuiteSparse_jll')
 executable('demo', 'demo.c', dependencies: suitesparse)
 ```
 
-On its own, that `dependency('SuiteSparse')` call fails, because Meson has
+The `_jll` suffix on the name is deliberate. It is what a JLL wrap provides,
+kept distinct from a bare `SuiteSparse` so the call can never bind by
+accident to an unrelated system library of the same name.
+
+On its own, that `dependency('SuiteSparse_jll')` call fails, because Meson has
 no idea where to find SuiteSparse. We provide it by generating a wrap set
 from the JLL:
 
@@ -44,7 +48,7 @@ $ meson-jll install SuiteSparse
 
 This writes a set of wrap files into `subprojects/`, one describing
 SuiteSparse and one for every JLL it depends on. Nothing else in the project
-changes. The `dependency('SuiteSparse')` call now resolves to the generated
+changes. The `dependency('SuiteSparse_jll')` call now resolves to the generated
 wrap, and a normal Meson build downloads the one binary that matches the
 current machine and links against it:
 
@@ -83,7 +87,7 @@ SuiteSparse wrap, exactly as the C example did:
 ```python
 project('demo_ext', 'c')
 python = import('python').find_installation()
-suitesparse = dependency('SuiteSparse')
+suitesparse = dependency('SuiteSparse_jll')
 python.extension_module(
     '_demo',
     '_demo.c',

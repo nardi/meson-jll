@@ -274,6 +274,7 @@ fn write_triplet_overlay(
 
     let context = TripletOverlayContext {
         name: &project_name,
+        version: &package.version,
         dependency_variable: dependency_variable_name.to_string(),
         library_products,
         jll_dependencies,

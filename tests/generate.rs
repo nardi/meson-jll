@@ -33,7 +33,7 @@ fn generates_a_full_wrap_set_from_a_fixture_jll() {
     let selector_wrap = fs::read_to_string(output_dir.path().join("ExampleThing.wrap")).unwrap();
     assert!(selector_wrap.contains("# meson-jll: name=ExampleThing version=1.2.3+0"));
     assert!(selector_wrap.contains("directory = ExampleThing"));
-    assert!(selector_wrap.contains("dependency_names = ExampleThing"));
+    assert!(selector_wrap.contains("dependency_names = ExampleThing_jll"));
     // Meson does not discover packagefiles/<name>/ on its own: without this,
     // the overlay is silently never applied.
     assert!(selector_wrap.contains("patch_directory = ExampleThing"));
@@ -61,9 +61,8 @@ fn generates_a_full_wrap_set_from_a_fixture_jll() {
     assert!(selector_overlay
         .contains("host_machine.cpu_family() == 'aarch64' and host_machine.system() == 'darwin'"));
     assert!(selector_overlay.contains("subproject('ExampleThing-' + triplet)"));
-    assert!(
-        selector_overlay.contains("meson.override_dependency('ExampleThing', examplething_dep)")
-    );
+    assert!(selector_overlay
+        .contains("meson.override_dependency('ExampleThing_jll', examplething_dep)"));
 
     let linux_wrap =
         fs::read_to_string(output_dir.path().join("ExampleThing-x86_64-linux-gnu.wrap")).unwrap();
@@ -85,6 +84,13 @@ fn generates_a_full_wrap_set_from_a_fixture_jll() {
         "libexample = cc.find_library('example', dirs: meson.current_source_dir() / 'lib')"
     ));
     assert!(linux_overlay.contains("examplething_dep = declare_dependency("));
+    // The declared dependency carries the JLL's full release version so a
+    // consumer can pin it.
+    assert!(linux_overlay.contains("version: '1.2.3+0'"));
+    // The whole lib/ runtime directory is installed, not just the declared
+    // products, so undeclared transitive runtime libraries come along too.
+    assert!(linux_overlay.contains("install_subdir("));
+    assert!(linux_overlay.contains("exclude_directories: ['cmake', 'pkgconfig', 'gcc']"));
 
     // This fixture never splits a platform by ABI, so no options file.
     assert!(!output_dir
