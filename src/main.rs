@@ -282,7 +282,7 @@ fn run_info(name: &str) -> anyhow::Result<()> {
         .filter_map(|(tag, _sha)| registry::version_from_tag(tag))
         .filter_map(|raw| Version::parse(raw).ok().map(|version| (raw, version)))
         .collect();
-    versions.sort_by(|left, right| right.1.cmp(&left.1));
+    versions.sort_by_key(|(_, version)| std::cmp::Reverse(*version));
     for (raw, _version) in versions {
         println!("{raw}");
     }
