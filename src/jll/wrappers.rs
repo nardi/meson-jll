@@ -140,6 +140,76 @@ fn init_library_product(input: &str) -> IResult<&str, (String, String)> {
     Ok((input, (name.to_string(), path.to_string())))
 }
 
+/// One executable this JLL provides, once its tarball has been extracted.
+/// A JLL's CLI tool (`highs.exe` alongside `libhighs.dll`, for example),
+/// never something a Meson `dependency()` needs to expose, but its path is
+/// still useful for telling it apart from the library products a runtime
+/// install actually needs (see [`crate::generate::context::TripletOverlayContext`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutableProduct {
+    /// The Julia variable name, for example `highs`.
+    pub variable: String,
+    /// The path relative to the extracted tarball, for example
+    /// `bin/highs.exe`.
+    pub path: String,
+}
+
+/// Scans a wrapper script's source text for executable product
+/// declarations, the same way [`parse_library_products`] does for
+/// libraries: `@declare_executable_product` and `@init_executable_product`
+/// calls are matched independently and joined by variable name.
+pub fn parse_executable_products(source: &str) -> Vec<ExecutableProduct> {
+    let names = scan_all(source, declare_executable_product);
+    let paths = scan_all(source, init_executable_product);
+
+    names
+        .into_iter()
+        .filter_map(|variable| {
+            paths
+                .iter()
+                .find(|(other_variable, _)| *other_variable == variable)
+                .map(|(_, path)| ExecutableProduct {
+                    variable: variable.clone(),
+                    path: path.clone(),
+                })
+        })
+        .collect()
+}
+
+/// Matches the next `@declare_executable_product(name)` call, skipping any
+/// preceding text. Unlike a library product, there is no soname argument.
+fn declare_executable_product(input: &str) -> IResult<&str, String> {
+    let (input, _) = preceded(
+        take_until("@declare_executable_product"),
+        tag("@declare_executable_product"),
+    )(input)?;
+    let (input, _) = char('(')(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = char(')')(input)?;
+    Ok((input, name.to_string()))
+}
+
+/// Matches the next `@init_executable_product(name, "path")` call, skipping
+/// any preceding text.
+fn init_executable_product(input: &str) -> IResult<&str, (String, String)> {
+    let (input, _) = preceded(
+        take_until("@init_executable_product"),
+        tag("@init_executable_product"),
+    )(input)?;
+    let (input, _) = char('(')(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = char(',')(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, path) = string_literal(input)?;
+    let (input, _) = take_until(")")(input)?;
+    let (input, _) = char(')')(input)?;
+    Ok((input, (name.to_string(), path.to_string())))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,5 +261,38 @@ mod tests {
     #[test]
     fn empty_source_yields_no_products() {
         assert_eq!(parse_library_products(""), Vec::new());
+    }
+
+    const EXECUTABLE_EXAMPLE: &str = r#"
+        JLLWrappers.@declare_library_product(libhighs, "libhighs.dll")
+        JLLWrappers.@declare_executable_product(highs)
+        function __init__()
+            JLLWrappers.@init_library_product(
+                libhighs,
+                "bin\\libhighs.dll",
+                RTLD_LAZY | RTLD_DEEPBIND,
+            )
+            JLLWrappers.@init_executable_product(
+                highs,
+                "bin\\highs.exe",
+            )
+        end
+    "#;
+
+    #[test]
+    fn parses_an_executable_product_alongside_a_library_product() {
+        let products = parse_executable_products(EXECUTABLE_EXAMPLE);
+        assert_eq!(
+            products,
+            vec![ExecutableProduct {
+                variable: "highs".to_string(),
+                path: r"bin\\highs.exe".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn empty_source_yields_no_executable_products() {
+        assert_eq!(parse_executable_products(""), Vec::new());
     }
 }

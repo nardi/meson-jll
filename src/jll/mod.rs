@@ -14,7 +14,7 @@ use crate::error::Result;
 use crate::source::Source;
 use artifacts::Platform;
 use project::ProjectToml;
-use wrappers::LibraryProduct;
+use wrappers::{ExecutableProduct, LibraryProduct};
 
 /// One fully resolved JLL package, ready to generate a wrap set from.
 #[derive(Debug)]
@@ -41,6 +41,13 @@ pub struct ResolvedPlatform {
     /// most likely means this tool's triplet-to-file-name guess is wrong for
     /// an unusual platform, not that the platform has no libraries.
     pub library_products: Vec<LibraryProduct>,
+    /// A JLL's own CLI tools, if any, such as `highs.exe` alongside
+    /// `libhighs.dll`. Never linked against, but a Windows triplet overlay
+    /// excludes these from its runtime install: a consumer that only
+    /// depends on the library has no use for the JLL's command-line tool,
+    /// and installing it anyway would bloat something like a Python wheel
+    /// for no reason.
+    pub executable_products: Vec<ExecutableProduct>,
 }
 
 /// Loads a JLL package's metadata from `source`, which must already be
@@ -68,13 +75,19 @@ pub fn load<S: Source>(source: &S) -> Result<JllPackage> {
                 "src/wrappers/{}.jl",
                 platform.triplet.julia_wrapper_identifier()
             );
-            let library_products = source
-                .fetch(&wrapper_path)
-                .map(|text| wrappers::parse_library_products(&text))
+            let wrapper_text = source.fetch(&wrapper_path).ok();
+            let library_products = wrapper_text
+                .as_deref()
+                .map(wrappers::parse_library_products)
+                .unwrap_or_default();
+            let executable_products = wrapper_text
+                .as_deref()
+                .map(wrappers::parse_executable_products)
                 .unwrap_or_default();
             ResolvedPlatform {
                 platform,
                 library_products,
+                executable_products,
             }
         })
         .collect();

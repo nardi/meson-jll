@@ -61,12 +61,33 @@ JLL binaries ship unstripped, with a full symbol table. A bundled
 `libstdc++` commonly carries ten times its stripped size in debug and symbol
 information. Meson's own `-Dstrip` does not help here on its own: it only
 strips targets Meson itself compiled, never a file `install_subdir` copied in
-verbatim the way every library above is installed. Each binary wrap's overlay
-therefore adds its own install-time step, gated on the same `-Dstrip` option
-plus a strip tool (`strip` or `llvm-strip`) actually being found, that strips
-every file it just installed. This is silently skipped, the same as the MSVC
-import-lib workaround above, when no strip tool is available, so it is always
-safe to leave enabled.
+verbatim the way every library above is installed.
+
+The natural fix, an `add_install_script()` that strips whatever was just
+installed, does not work for a Python wheel: meson-python never actually
+runs `meson install`. It builds a wheel by reading Meson's own static
+install plan (`meson introspect --install-plan`, computed entirely at
+configure time) and copying those files straight out of the build tree.
+An install script produces no such advance listing, since Meson cannot know
+ahead of time what an arbitrary script will do, so it is invisible to that
+plan and silently never runs for a wheel build, `-Dstrip=true` or not.
+
+Instead, each declared library product gets its own `custom_target()`,
+built at compile time (which meson-python does run) rather than install
+time, gated on `-Dstrip` and a strip tool (`strip` or `llvm-strip`) being
+found. It strips a copy of the product under its own final name, and the
+bulk directory install above excludes that one file, so the stripped
+`custom_target` output is what actually ships. This is silently skipped,
+the same as the MSVC import-lib workaround above, when no strip tool is
+found, so it is always safe to leave enabled. It can only reach the
+products a triplet overlay already knows how to name, so an undeclared
+transitive library (libquadmath, again) ships unstripped regardless.
+
+On Windows, the same runtime install also always excludes a JLL's own
+executable products (`highs.exe` alongside `libhighs.dll`, for example,
+parsed the same way library products are, from `@declare_executable_product`
+in the wrapper script): a library consumer never needs the JLL's own CLI
+tool, and bundling it anyway only bloats a wheel for no reason.
 
 One rough edge remains on macOS, in meson-python rather than here. When an
 extension links libraries from several JLL subprojects, each contributes its

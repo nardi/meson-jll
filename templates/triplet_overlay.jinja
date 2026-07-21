@@ -23,8 +23,7 @@ endif
 present somewhere on this machine, but not necessarily the one that
 `python3` on PATH resolves to (or even present under that name at all),
 so this is still found the ordinary way rather than assumed. Used below
-by the MSVC import-lib workaround (Windows only) and by the strip step
-(every platform). #}
+by the MSVC import-lib workaround (Windows only). #}
 python3 = find_program('python3', 'python', required: false)
 
 {% if is_windows %}
@@ -74,6 +73,18 @@ satisfy it. #}
 {{ dep }}_dep = dependency('{{ dep }}_jll')
 {% endfor %}
 
+{#- Whether the declared library products below get stripped (a much
+smaller install: JLL binaries ship unstripped, and libstdc++ alone
+commonly carries ten times its stripped size in symbols). Meson's own
+-Dstrip cannot do this by itself: it only strips targets Meson itself
+compiled, never a file install_subdir copies in verbatim.
+
+This can only reach the products this overlay knows about by name, not
+every file in the runtime directory (see below), so silently does
+nothing, same as the MSVC workaround above, when no strip tool is found. #}
+strip_tool = find_program('llvm-strip', 'strip', required: false)
+should_strip = get_option('strip') and strip_tool.found()
+
 {#- Install this platform's own runtime libraries, the same as
 `library('z', ..., install: true)` in an ordinary Meson project. They go
 to libdir, which is where meson-python folds a wheel's bundled shared
@@ -88,9 +99,26 @@ rest), and those are never declared as products of their own, so listing
 only the declared ones leaves the loader unable to satisfy them at import
 time. Installing the versioned files as they sit in the tarball also keeps
 the name the loader actually records as a dependency (libhighs.so.1, not
-the unversioned dev link libhighs.so), which is the one a wheel needs. #}
+the unversioned dev link libhighs.so), which is the one a wheel needs.
+
+When stripping, each declared product is excluded here and installed
+separately below instead, as a stripped copy under the same final name.
+Undeclared files (libquadmath and friends) still come along unstripped:
+Meson has no way to enumerate an unknown set of files at configure time
+(no glob), so only the ones this overlay already has to name individually,
+to link against, can be rebuilt as a stripped copy this way. #}
 {% if is_windows %}
-install_subdir('bin', install_dir: get_option('libdir'), strip_directory: true)
+{#- A JLL's own CLI tools (highs.exe alongside libhighs.dll, say) live in
+bin/ right next to the DLLs a library consumer actually needs, but a
+library consumer has no use for them, so they are always excluded here
+rather than only when stripping. #}
+install_subdir(
+  'bin',
+  install_dir: get_option('libdir'),
+  strip_directory: true,
+  exclude_files: [{% for exe in windows_executable_basenames %}'{{ exe }}', {% endfor %}]
+    + (should_strip ? [{% for lib in library_products %}'{{ lib.basename }}',{% endfor %}] : []),
+)
 {% else %}
 {#- The runtime shared objects live directly in lib/. The sibling cmake/ and
 pkgconfig/ trees, and the compiler support files under gcc/, are build-time
@@ -100,23 +128,31 @@ install_subdir(
   install_dir: get_option('libdir'),
   strip_directory: true,
   exclude_directories: ['cmake', 'pkgconfig', 'gcc'],
+  exclude_files: should_strip ? [{% for lib in library_products %}'{{ lib.basename }}',{% endfor %}] : [],
 )
 {% endif %}
 
-{#- JLL binaries ship unstripped, with a full symbol table (libstdc++.so.6 or
-libstdc++-6.dll alone commonly carries ten times its stripped size in
-symbols). Meson's own -Dstrip only strips targets Meson compiled, never
-files an install_subdir copied in verbatim like the ones above, so
-without this a project built with -Dstrip=true would still end up with
-every JLL dependency fully unstripped. strip_libs.py (shared the same
-way dll_to_lib.py is) strips every file this overlay just installed,
-once -Dstrip and a strip tool are both available. Silently does nothing
-otherwise, the same as the MSVC workaround above when python3 is missing. #}
-strip_tool = find_program('llvm-strip', 'strip', required: false)
-if get_option('strip') and python3.found() and strip_tool.found()
-  strip_libs = meson.current_source_dir() / '..' / 'packagefiles' / 'strip_libs.py'
-  meson.add_install_script(python3, strip_libs, strip_tool.full_path(), get_option('libdir'))
+{#- The stripped copy of each declared product, installed under the exact
+name install_subdir excluded above (see why: this is a custom_target, a
+real build output Meson knows about ahead of time, unlike
+add_install_script. meson-python's own wheel-building never actually
+runs `meson install`: it reads Meson's static install plan and copies
+those files straight from the build tree, so an install script, which
+produces no such advance listing, is invisible to it, and silently never
+runs for a wheel build. A build-time target is the only form of "install
+this instead" meson-python can see. #}
+{% for lib in library_products %}
+if should_strip
+  custom_target(
+    '{{ lib.link_name }}-stripped',
+    input: '{{ lib.path }}',
+    output: '{{ lib.basename }}',
+    command: [strip_tool, '--strip-all', '-o', '@OUTPUT@', '@INPUT@'],
+    install: true,
+    install_dir: get_option('libdir'),
+  )
 endif
+{% endfor %}
 
 {{ dependency_variable }} = declare_dependency(
   {#- The JLL's own release version, so a consumer can pin it, for example

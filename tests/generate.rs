@@ -103,15 +103,19 @@ fn generates_a_full_wrap_set_from_a_fixture_jll() {
     // products, so undeclared transitive runtime libraries come along too.
     assert!(linux_overlay.contains("install_subdir("));
     assert!(linux_overlay.contains("exclude_directories: ['cmake', 'pkgconfig', 'gcc']"));
-    // Stripping the installed libs is gated on -Dstrip and a strip tool
-    // being found, and invokes the shared strip_libs.py script.
-    assert!(linux_overlay.contains("if get_option('strip')"));
-    assert!(linux_overlay.contains("strip_libs.py"));
-    assert!(output_dir
-        .path()
-        .join("packagefiles")
-        .join(generate::STRIP_LIBS_FILENAME)
-        .exists());
+    // Stripping is gated on -Dstrip and a strip tool being found, and (since
+    // meson-python's wheel builder never sees an add_install_script) is a
+    // real build-time custom_target per declared product, not a post-install
+    // script.
+    assert!(linux_overlay.contains("should_strip = get_option('strip') and strip_tool.found()"));
+    assert!(linux_overlay.contains("'example-stripped'"));
+    assert!(
+        linux_overlay.contains("command: [strip_tool, '--strip-all', '-o', '@OUTPUT@', '@INPUT@']")
+    );
+    // The bulk directory install excludes each declared product's own file
+    // only once stripping is actually active, so the unstripped file is
+    // never present alongside its stripped custom_target replacement.
+    assert!(linux_overlay.contains("exclude_files: should_strip ? ['libexample.so'"));
 
     // This fixture never splits a platform by ABI, so no options file.
     assert!(!output_dir

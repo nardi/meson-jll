@@ -18,9 +18,9 @@ use crate::error::{Error, Result};
 use crate::jll::triplet::Os;
 use crate::jll::{JllPackage, ResolvedPlatform};
 use context::{
-    dependency_variable, link_name_from_path, normalize_path, BinaryWrapContext,
-    LibraryProductView, OptionsContext, PlatformSelector, SelectorOverlayContext,
-    SelectorWrapContext, TripletOverlayContext,
+    basename_from_path, dependency_variable, link_name_from_path, normalize_path,
+    BinaryWrapContext, LibraryProductView, OptionsContext, PlatformSelector,
+    SelectorOverlayContext, SelectorWrapContext, TripletOverlayContext,
 };
 
 /// The name of the placeholder archive every selector wrap's
@@ -123,58 +123,6 @@ if __name__ == "__main__":
     main()
 "#;
 
-/// The name `STRIP_LIBS_SCRIPT` is written under, directly in
-/// `packagefiles/`, shared the same way [`DLL_TO_LIB_FILENAME`] is.
-pub const STRIP_LIBS_FILENAME: &str = "strip_libs.py";
-
-/// A small, generic Python script that strips debug info and symbol
-/// tables from every file a triplet overlay just installed, using
-/// whichever strip tool Meson found (see the "strip" section of
-/// `triplet_overlay.jinja`, the only place this is invoked from, at
-/// Meson install time, and only when `-Dstrip` is set).
-///
-/// This exists because JLL binaries ship unstripped: a bundled
-/// `libstdc++` commonly carries ten times its stripped size in symbols.
-/// Meson's own `-Dstrip` only strips targets Meson itself compiled, never
-/// a file `install_subdir` copied in verbatim, so without this a project
-/// built with `-Dstrip=true` would still ship every JLL dependency fully
-/// unstripped.
-const STRIP_LIBS_SCRIPT: &str = r#"#!/usr/bin/env python3
-"""Strips every file Meson just installed into libdir, using whichever
-strip tool Meson found. See the meson-jll comment that generated this
-file for why this exists.
-
-Usage: strip_libs.py <strip-tool> <libdir-relative-path>
-"""
-import os
-import subprocess
-import sys
-
-
-def main():
-    strip_tool, libdir = sys.argv[1:3]
-
-    # MESON_INSTALL_DESTDIR_PREFIX is only known once `meson install`
-    # actually runs (it can be overridden with --destdir or --prefix at
-    # install time), so the libdir this script strips is resolved here,
-    # never baked into the command Meson was configured with.
-    destdir_prefix = os.environ["MESON_INSTALL_DESTDIR_PREFIX"]
-    target_dir = os.path.join(destdir_prefix, libdir)
-    if not os.path.isdir(target_dir):
-        return
-
-    for name in os.listdir(target_dir):
-        path = os.path.join(target_dir, name)
-        if os.path.isfile(path):
-            # check=False: a stray non-object file left in libdir should
-            # not fail the whole install, only skip stripping.
-            subprocess.run([strip_tool, "--strip-all", path], check=False)
-
-
-if __name__ == "__main__":
-    main()
-"#;
-
 /// Writes the full wrap set for `package` into `subprojects_dir` (normally
 /// a project's `subprojects/` directory).
 ///
@@ -184,7 +132,6 @@ pub fn write_wrap_set(package: &JllPackage, subprojects_dir: &Path, force: bool)
     let dependency_variable_name = dependency_variable(&package.name);
 
     write_empty_tar(subprojects_dir)?;
-    write_strip_libs_script(subprojects_dir)?;
     write_selector_wrap(package, subprojects_dir, force)?;
     write_selector_overlay(package, &dependency_variable_name, subprojects_dir, force)?;
     write_options(package, subprojects_dir, force)?;
@@ -209,26 +156,6 @@ pub fn write_wrap_set(package: &JllPackage, subprojects_dir: &Path, force: bool)
     }
 
     Ok(())
-}
-
-/// Writes the shared `strip_libs.py`, if it is not already there. Every
-/// platform's triplet overlay references it, not only Windows's, so
-/// (unlike [`write_dll_to_lib_script`]) this always runs.
-fn write_strip_libs_script(subprojects_dir: &Path) -> Result<()> {
-    let path = subprojects_dir
-        .join("packagefiles")
-        .join(STRIP_LIBS_FILENAME);
-    if path.exists() {
-        return Ok(());
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| Error::CreateDirectory {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-    }
-    fs::write(&path, insert_marker_after_shebang(STRIP_LIBS_SCRIPT))
-        .map_err(|source| Error::WriteFile { path, source })
 }
 
 /// Writes the shared empty tar archive, if it is not already there.
@@ -325,6 +252,7 @@ fn write_triplet_overlay(
             variable: product.variable.clone(),
             link_name: link_name_from_path(&product.path),
             path: normalize_path(&product.path),
+            basename: basename_from_path(&product.path),
         })
         .collect();
 
@@ -360,6 +288,11 @@ fn write_triplet_overlay(
             .arch
             .msvc_machine()
             .unwrap_or_default(),
+        windows_executable_basenames: resolved
+            .executable_products
+            .iter()
+            .map(|product| basename_from_path(&product.path))
+            .collect(),
     };
     let rendered = render(&context, "triplet_overlay.jinja")?;
     let path = overlay_dir.join("meson.build");
@@ -568,6 +501,7 @@ mod tests {
                 source_hash: "0".repeat(64),
             },
             library_products: Vec::new(),
+            executable_products: Vec::new(),
         }
     }
 
