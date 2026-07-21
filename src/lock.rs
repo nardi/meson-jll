@@ -326,7 +326,12 @@ impl LockFile {
 
     /// Renders the lock sections, ending with a newline.
     fn lock_sections(&self) -> String {
-        let mut text = format!("[{FORMAT_SECTION}]\nformat = {FORMAT_VERSION}\n");
+        // The version of the tool that wrote the lock, so a bug report that
+        // includes the file also names it.
+        let mut text = format!(
+            "[{FORMAT_SECTION}]\n# Written by meson-jll v{}\nformat = {FORMAT_VERSION}\n",
+            env!("CARGO_PKG_VERSION")
+        );
         if !self.roots.is_empty() {
             text.push_str(&format!("\n[{ROOTS_SECTION}]\n"));
             for (name, pin) in &self.roots {
