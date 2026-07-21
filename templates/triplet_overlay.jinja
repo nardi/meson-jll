@@ -81,9 +81,17 @@ compiled, never a file install_subdir copies in verbatim.
 
 This can only reach the products this overlay knows about by name, not
 every file in the runtime directory (see below), so silently does
-nothing, same as the MSVC workaround above, when no strip tool is found. #}
+nothing, same as the MSVC workaround above, when no strip tool is found.
+A strip tool is not always able to parse every binary it is pointed at
+either (llvm-strip has been observed to reject some MinGW-built binaries
+outright that it can still link against fine), so the actual stripping
+goes through strip_or_copy.py (shared the same way dll_to_lib.py is),
+which falls back to a plain copy on failure rather than taking the whole
+build down over a library that was always going to ship unstripped
+anyway. #}
 strip_tool = find_program('llvm-strip', 'strip', required: false)
-should_strip = get_option('strip') and strip_tool.found()
+should_strip = get_option('strip') and python3.found() and strip_tool.found()
+strip_or_copy = meson.current_source_dir() / '..' / 'packagefiles' / 'strip_or_copy.py'
 
 {#- Install this platform's own runtime libraries, the same as
 `library('z', ..., install: true)` in an ordinary Meson project. They go
@@ -147,7 +155,7 @@ if should_strip
     '{{ lib.link_name }}-stripped',
     input: '{{ lib.path }}',
     output: '{{ lib.basename }}',
-    command: [strip_tool, '--strip-all', '-o', '@OUTPUT@', '@INPUT@'],
+    command: [python3, strip_or_copy, strip_tool.full_path(), '@INPUT@', '@OUTPUT@'],
     install: true,
     install_dir: get_option('libdir'),
   )

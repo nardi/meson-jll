@@ -106,12 +106,16 @@ fn generates_a_full_wrap_set_from_a_fixture_jll() {
     // Stripping is gated on -Dstrip and a strip tool being found, and (since
     // meson-python's wheel builder never sees an add_install_script) is a
     // real build-time custom_target per declared product, not a post-install
-    // script.
-    assert!(linux_overlay.contains("should_strip = get_option('strip') and strip_tool.found()"));
+    // script. It goes through strip_or_copy.py, which falls back to a plain
+    // copy if the strip tool cannot parse the particular binary, rather than
+    // failing the whole build over a library that would just ship unstripped
+    // anyway.
+    assert!(linux_overlay
+        .contains("should_strip = get_option('strip') and python3.found() and strip_tool.found()"));
     assert!(linux_overlay.contains("'example-stripped'"));
-    assert!(
-        linux_overlay.contains("command: [strip_tool, '--strip-all', '-o', '@OUTPUT@', '@INPUT@']")
-    );
+    assert!(linux_overlay.contains(
+        "command: [python3, strip_or_copy, strip_tool.full_path(), '@INPUT@', '@OUTPUT@']"
+    ));
     // The bulk directory install excludes each declared product's own file
     // only once stripping is actually active, so the unstripped file is
     // never present alongside its stripped custom_target replacement.

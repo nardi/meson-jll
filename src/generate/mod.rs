@@ -123,6 +123,48 @@ if __name__ == "__main__":
     main()
 "#;
 
+/// The name `STRIP_OR_COPY_SCRIPT` is written under, directly in
+/// `packagefiles/`, shared the same way [`DLL_TO_LIB_FILENAME`] is.
+pub const STRIP_OR_COPY_FILENAME: &str = "strip_or_copy.py";
+
+/// A small, generic Python script that strips one file, falling back to a
+/// plain copy if the strip tool fails on it (see the "strip" section of
+/// `triplet_overlay.jinja`, the only place this is invoked from, as each
+/// declared library product's `custom_target` command).
+///
+/// This exists because a strip tool is not always able to parse every
+/// binary it is pointed at. `llvm-strip` in particular has been observed
+/// to reject some MinGW-built COFF binaries outright ("invalid
+/// SymbolTableIndex") that it can still link against just fine, which
+/// would otherwise take the whole build down over a library that was
+/// always going to ship unstripped anyway, defeating the point of `strip`
+/// being an opt-in size optimization rather than a correctness
+/// requirement.
+const STRIP_OR_COPY_SCRIPT: &str = r#"#!/usr/bin/env python3
+"""Strips one file with the given strip tool, falling back to a plain copy
+if the strip tool fails on it. See the meson-jll comment that generated
+this file for why this exists.
+
+Usage: strip_or_copy.py <strip-tool> <input-path> <output-path>
+"""
+import shutil
+import subprocess
+import sys
+
+
+def main():
+    strip_tool, input_path, output_path = sys.argv[1:4]
+    result = subprocess.run(
+        [strip_tool, "--strip-all", "-o", output_path, input_path]
+    )
+    if result.returncode != 0:
+        shutil.copyfile(input_path, output_path)
+
+
+if __name__ == "__main__":
+    main()
+"#;
+
 /// Writes the full wrap set for `package` into `subprojects_dir` (normally
 /// a project's `subprojects/` directory).
 ///
@@ -132,6 +174,7 @@ pub fn write_wrap_set(package: &JllPackage, subprojects_dir: &Path, force: bool)
     let dependency_variable_name = dependency_variable(&package.name);
 
     write_empty_tar(subprojects_dir)?;
+    write_strip_or_copy_script(subprojects_dir)?;
     write_selector_wrap(package, subprojects_dir, force)?;
     write_selector_overlay(package, &dependency_variable_name, subprojects_dir, force)?;
     write_options(package, subprojects_dir, force)?;
@@ -195,6 +238,26 @@ fn write_dll_to_lib_script(subprojects_dir: &Path) -> Result<()> {
         })?;
     }
     fs::write(&path, insert_marker_after_shebang(DLL_TO_LIB_SCRIPT))
+        .map_err(|source| Error::WriteFile { path, source })
+}
+
+/// Writes the shared `strip_or_copy.py`, if it is not already there. Every
+/// platform's triplet overlay references it, not only Windows's, so
+/// (unlike [`write_dll_to_lib_script`]) this always runs.
+fn write_strip_or_copy_script(subprojects_dir: &Path) -> Result<()> {
+    let path = subprojects_dir
+        .join("packagefiles")
+        .join(STRIP_OR_COPY_FILENAME);
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| Error::CreateDirectory {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    fs::write(&path, insert_marker_after_shebang(STRIP_OR_COPY_SCRIPT))
         .map_err(|source| Error::WriteFile { path, source })
 }
 
