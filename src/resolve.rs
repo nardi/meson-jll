@@ -283,7 +283,7 @@ fn highest_satisfying(
     constraints: &[CompatSpecifier],
 ) -> Option<(String, Version)> {
     let mut sorted = candidates.to_vec();
-    sorted.sort_by(|left, right| right.1.cmp(&left.1));
+    sorted.sort_by_key(|(_, version)| std::cmp::Reverse(*version));
     sorted.into_iter().find(|(_, version)| {
         constraints
             .iter()
