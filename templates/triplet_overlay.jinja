@@ -1,51 +1,51 @@
 project('{{ name }}', 'c')
 
 cc = meson.get_compiler('c')
-# The tarball is never downloaded ahead of time, so whether it ships headers
-# is unknown until Meson has actually extracted it. Checking here, after
-# extraction, avoids guessing in the generator.
+{#- The tarball is never downloaded ahead of time, so whether it ships headers
+is unknown until Meson has actually extracted it. Checking here, after
+extraction, avoids guessing in the generator. #}
 fs = import('fs')
 include_dirs = []
 if fs.is_dir('include')
   include_dirs = [include_directories('include')]
-  # Some JLLs (SuiteSparse and HiGHS both do) namespace their headers under
-  # include/<lowercased-package-name>/ instead of flat under include/, to
-  # avoid collisions between generically named headers from different JLLs.
-  # Nothing in the JLL's own metadata says which convention it follows, so
-  # both are added when present, covering `#include <SuiteSparse_config.h>`
-  # and `#include <suitesparse/SuiteSparse_config.h>` alike.
+  {#- Some JLLs (SuiteSparse and HiGHS both do) namespace their headers under
+  include/<lowercased-package-name>/ instead of flat under include/, to
+  avoid collisions between generically named headers from different JLLs.
+  Nothing in the JLL's own metadata says which convention it follows, so
+  both are added when present, covering `#include <SuiteSparse_config.h>`
+  and `#include <suitesparse/SuiteSparse_config.h>` alike. #}
   if fs.is_dir('include/{{ namespaced_include_dir }}')
     include_dirs += [include_directories('include/{{ namespaced_include_dir }}')]
   endif
 endif
 
-# Meson itself is a Python program, so a python3 interpreter is always
-# present somewhere on this machine, but not necessarily the one that
-# `python3` on PATH resolves to (or even present under that name at all),
-# so this is still found the ordinary way rather than assumed. Used below
-# by the MSVC import-lib workaround (Windows only) and by the strip step
-# (every platform).
+{#- Meson itself is a Python program, so a python3 interpreter is always
+present somewhere on this machine, but not necessarily the one that
+`python3` on PATH resolves to (or even present under that name at all),
+so this is still found the ordinary way rather than assumed. Used below
+by the MSVC import-lib workaround (Windows only) and by the strip step
+(every platform). #}
 python3 = find_program('python3', 'python', required: false)
 
 {% if is_windows %}
-# Julia's Windows binaries are built with MinGW-w64 GCC, whose .dll.a
-# import libraries are a GNU ar archive format MSVC's linker cannot read
-# at all. When the active compiler turns out to be MSVC and a library has
-# no native .lib of its own, dll_to_lib.py regenerates one straight from
-# that DLL's own export table using dumpbin and lib.exe, both already on
-# PATH as part of the same MSVC installation Meson activated to find `cc`
-# in the first place. This runs at Meson build time, once per library that
-# actually needs it, never while meson-jll itself is generating this file.
-#
-# The script lives once in packagefiles/, a directory up from every
-# triplet overlay, rather than a copy inside each one: every Windows
-# platform of every JLL shares this exact same file.
+{#- Julia's Windows binaries are built with MinGW-w64 GCC, whose .dll.a
+import libraries are a GNU ar archive format MSVC's linker cannot read
+at all. When the active compiler turns out to be MSVC and a library has
+no native .lib of its own, dll_to_lib.py regenerates one straight from
+that DLL's own export table using dumpbin and lib.exe, both already on
+PATH as part of the same MSVC installation Meson activated to find `cc`
+in the first place. This runs at Meson build time, once per library that
+actually needs it, never while meson-jll itself is generating this file.
+
+The script lives once in packagefiles/, a directory up from every
+triplet overlay, rather than a copy inside each one: every Windows
+platform of every JLL shares this exact same file. #}
 is_msvc = cc.get_id() == 'msvc'
 dll_to_lib = meson.current_source_dir() / '..' / 'packagefiles' / 'dll_to_lib.py'
 {% endif %}
 
-# One cc.find_library() per library this platform's wrapper script
-# declares, using the exact path Julia itself records for it.
+{#- One cc.find_library() per library this platform's wrapper script
+declares, using the exact path Julia itself records for it. #}
 {% for lib in library_products %}
 {% if is_windows %}
 if is_msvc and python3.found() and fs.is_file('{{ lib.path }}') and not fs.is_file('lib/{{ lib.link_name }}.lib')
@@ -64,37 +64,37 @@ endif
 {% endif %}
 {% endfor %}
 
-# Transitive JLL dependencies, resolved the same way this package itself
-# is: through their own selector wrap's [provide] fallback. The `_jll`
-# suffix on the dependency name is what keeps this from silently binding to
-# a same-named system library (a system zlib exists almost everywhere): no
-# system package advertises itself as `Zlib_jll`, so only the wrap can
-# satisfy it.
+{#- Transitive JLL dependencies, resolved the same way this package itself
+is: through their own selector wrap's [provide] fallback. The `_jll`
+suffix on the dependency name is what keeps this from silently binding to
+a same-named system library (a system zlib exists almost everywhere): no
+system package advertises itself as `Zlib_jll`, so only the wrap can
+satisfy it. #}
 {% for dep in jll_dependencies %}
 {{ dep }}_dep = dependency('{{ dep }}_jll')
 {% endfor %}
 
-# Install this platform's own runtime libraries, the same as
-# `library('z', ..., install: true)` in an ordinary Meson project. They go
-# to libdir, which is where meson-python folds a wheel's bundled shared
-# libraries from (into `.<project>.mesonpy.libs`), and where an rpath entry
-# points on the platforms that have one.
-#
-# The whole runtime directory is installed, not only the declared library
-# products, for the same reason on every platform: a JLL tarball also ships
-# the transitive runtime libraries its own products depend on (libquadmath
-# behind libgfortran, the MinGW libwinpthread-1.dll and friends behind the
-# rest), and those are never declared as products of their own, so listing
-# only the declared ones leaves the loader unable to satisfy them at import
-# time. Installing the versioned files as they sit in the tarball also keeps
-# the name the loader actually records as a dependency (libhighs.so.1, not
-# the unversioned dev link libhighs.so), which is the one a wheel needs.
+{#- Install this platform's own runtime libraries, the same as
+`library('z', ..., install: true)` in an ordinary Meson project. They go
+to libdir, which is where meson-python folds a wheel's bundled shared
+libraries from (into `.<project>.mesonpy.libs`), and where an rpath entry
+points on the platforms that have one.
+
+The whole runtime directory is installed, not only the declared library
+products, for the same reason on every platform: a JLL tarball also ships
+the transitive runtime libraries its own products depend on (libquadmath
+behind libgfortran, the MinGW libwinpthread-1.dll and friends behind the
+rest), and those are never declared as products of their own, so listing
+only the declared ones leaves the loader unable to satisfy them at import
+time. Installing the versioned files as they sit in the tarball also keeps
+the name the loader actually records as a dependency (libhighs.so.1, not
+the unversioned dev link libhighs.so), which is the one a wheel needs. #}
 {% if is_windows %}
 install_subdir('bin', install_dir: get_option('libdir'), strip_directory: true)
 {% else %}
-# The runtime shared objects live directly in lib/. The sibling cmake/ and
-# pkgconfig/ trees, and the compiler support files under gcc/, are build-time
-# only and would just bloat the wheel, so they are left out.
+{#- The runtime shared objects live directly in lib/. The sibling cmake/ and
+pkgconfig/ trees, and the compiler support files under gcc/, are build-time
+only and would just bloat the wheel, so they are left out. #}
 install_subdir(
   'lib',
   install_dir: get_option('libdir'),
@@ -103,15 +103,15 @@ install_subdir(
 )
 {% endif %}
 
-# JLL binaries ship unstripped, with a full symbol table (libstdc++.so.6 or
-# libstdc++-6.dll alone commonly carries ten times its stripped size in
-# symbols). Meson's own -Dstrip only strips targets Meson compiled, never
-# files an install_subdir copied in verbatim like the ones above, so
-# without this a project built with -Dstrip=true would still end up with
-# every JLL dependency fully unstripped. strip_libs.py (shared the same
-# way dll_to_lib.py is) strips every file this overlay just installed,
-# once -Dstrip and a strip tool are both available. Silently does nothing
-# otherwise, the same as the MSVC workaround above when python3 is missing.
+{#- JLL binaries ship unstripped, with a full symbol table (libstdc++.so.6 or
+libstdc++-6.dll alone commonly carries ten times its stripped size in
+symbols). Meson's own -Dstrip only strips targets Meson compiled, never
+files an install_subdir copied in verbatim like the ones above, so
+without this a project built with -Dstrip=true would still end up with
+every JLL dependency fully unstripped. strip_libs.py (shared the same
+way dll_to_lib.py is) strips every file this overlay just installed,
+once -Dstrip and a strip tool are both available. Silently does nothing
+otherwise, the same as the MSVC workaround above when python3 is missing. #}
 strip_tool = find_program('llvm-strip', 'strip', required: false)
 if get_option('strip') and python3.found() and strip_tool.found()
   strip_libs = meson.current_source_dir() / '..' / 'packagefiles' / 'strip_libs.py'
@@ -119,8 +119,8 @@ if get_option('strip') and python3.found() and strip_tool.found()
 endif
 
 {{ dependency_variable }} = declare_dependency(
-  # The JLL's own release version, so a consumer can pin it, for example
-  # dependency('HiGHS_jll', version: '>=1.15.0').
+  {#- The JLL's own release version, so a consumer can pin it, for example
+  dependency('HiGHS_jll', version: '>=1.15.0'). #}
   version: '{{ version }}',
   include_directories: include_dirs,
   dependencies: [
