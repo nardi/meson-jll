@@ -55,6 +55,19 @@ dependency (`libhighs.so.1`, not the unversioned dev link `libhighs.so`), which
 is the name a wheel needs and the one repair tools like `auditwheel` and
 `delocate` look for.
 
+## Stripping the runtime libraries
+
+JLL binaries ship unstripped, with a full symbol table. A bundled
+`libstdc++` commonly carries ten times its stripped size in debug and symbol
+information. Meson's own `-Dstrip` does not help here on its own: it only
+strips targets Meson itself compiled, never a file `install_subdir` copied in
+verbatim the way every library above is installed. Each binary wrap's overlay
+therefore adds its own install-time step, gated on the same `-Dstrip` option
+plus a strip tool (`strip` or `llvm-strip`) actually being found, that strips
+every file it just installed. This is silently skipped, the same as the MSVC
+import-lib workaround above, when no strip tool is available, so it is always
+safe to leave enabled.
+
 One rough edge remains on macOS, in meson-python rather than here. When an
 extension links libraries from several JLL subprojects, each contributes its
 own `@loader_path`-relative `LC_RPATH`, and meson-python rewrites all of them to

@@ -19,6 +19,14 @@ if fs.is_dir('include')
   endif
 endif
 
+# Meson itself is a Python program, so a python3 interpreter is always
+# present somewhere on this machine, but not necessarily the one that
+# `python3` on PATH resolves to (or even present under that name at all),
+# so this is still found the ordinary way rather than assumed. Used below
+# by the MSVC import-lib workaround (Windows only) and by the strip step
+# (every platform).
+python3 = find_program('python3', 'python', required: false)
+
 {% if is_windows %}
 # Julia's Windows binaries are built with MinGW-w64 GCC, whose .dll.a
 # import libraries are a GNU ar archive format MSVC's linker cannot read
@@ -33,7 +41,6 @@ endif
 # triplet overlay, rather than a copy inside each one: every Windows
 # platform of every JLL shares this exact same file.
 is_msvc = cc.get_id() == 'msvc'
-python3 = find_program('python3', 'python', required: false)
 dll_to_lib = meson.current_source_dir() / '..' / 'packagefiles' / 'dll_to_lib.py'
 {% endif %}
 
@@ -95,6 +102,21 @@ install_subdir(
   exclude_directories: ['cmake', 'pkgconfig', 'gcc'],
 )
 {% endif %}
+
+# JLL binaries ship unstripped, with a full symbol table (libstdc++.so.6 or
+# libstdc++-6.dll alone commonly carries ten times its stripped size in
+# symbols). Meson's own -Dstrip only strips targets Meson compiled, never
+# files an install_subdir copied in verbatim like the ones above, so
+# without this a project built with -Dstrip=true would still end up with
+# every JLL dependency fully unstripped. strip_libs.py (shared the same
+# way dll_to_lib.py is) strips every file this overlay just installed,
+# once -Dstrip and a strip tool are both available. Silently does nothing
+# otherwise, the same as the MSVC workaround above when python3 is missing.
+strip_tool = find_program('llvm-strip', 'strip', required: false)
+if get_option('strip') and python3.found() and strip_tool.found()
+  strip_libs = meson.current_source_dir() / '..' / 'packagefiles' / 'strip_libs.py'
+  meson.add_install_script(python3, strip_libs, strip_tool.full_path(), get_option('libdir'))
+endif
 
 {{ dependency_variable }} = declare_dependency(
   # The JLL's own release version, so a consumer can pin it, for example

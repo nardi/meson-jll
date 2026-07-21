@@ -91,6 +91,15 @@ fn generates_a_full_wrap_set_from_a_fixture_jll() {
     // products, so undeclared transitive runtime libraries come along too.
     assert!(linux_overlay.contains("install_subdir("));
     assert!(linux_overlay.contains("exclude_directories: ['cmake', 'pkgconfig', 'gcc']"));
+    // Stripping the installed libs is gated on -Dstrip and a strip tool
+    // being found, and invokes the shared strip_libs.py script.
+    assert!(linux_overlay.contains("if get_option('strip')"));
+    assert!(linux_overlay.contains("strip_libs.py"));
+    assert!(output_dir
+        .path()
+        .join("packagefiles")
+        .join(generate::STRIP_LIBS_FILENAME)
+        .exists());
 
     // This fixture never splits a platform by ABI, so no options file.
     assert!(!output_dir
