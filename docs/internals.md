@@ -83,6 +83,16 @@ found, so it is always safe to leave enabled. It can only reach the
 products a triplet overlay already knows how to name, so an undeclared
 transitive library (libquadmath, again) ships unstripped regardless.
 
+The actual stripping goes through `strip_or_copy.py` (shared the same way
+`dll_to_lib.py` is), not a direct call to the strip tool, because a strip
+tool is not always able to parse every binary it is pointed at.
+`llvm-strip` in particular has been observed to reject some MinGW-built
+COFF binaries outright ("invalid SymbolTableIndex") that it can still link
+against fine. Since `-Dstrip` is a size optimization, never a correctness
+requirement, `strip_or_copy.py` falls back to a plain copy on failure
+rather than taking the whole build down over a library that was always
+going to ship unstripped anyway.
+
 On Windows, the same runtime install also always excludes a JLL's own
 executable products (`highs.exe` alongside `libhighs.dll`, for example,
 parsed the same way library products are, from `@declare_executable_product`
