@@ -278,13 +278,26 @@ fn highs_wheel_builds_and_imports_against_real_tarballs() {
 
     // Inspected via Python's own zipfile module rather than adding a Rust
     // zip crate this codebase has no other use for: a wheel is just a zip.
+    //
+    // Besides proving the libraries are bundled at all, this is where the
+    // pruning is checked from the consumer's end. A JLL tarball carries
+    // plenty a consumer never loads (the GCC sanitizer runtimes, the
+    // Objective-C runtime, libitm, static archives), which used to be
+    // copied in wholesale: one real cyhighs wheel carried ~90MB of it.
+    // Naming the categories individually, rather than asserting a total
+    // size, keeps the failure message pointed at what came back.
     let check_script = format!(
         "import zipfile\n\
          names = zipfile.ZipFile(r'{wheel}').namelist()\n\
          bundled = [n for n in names if '.mesonpy.libs' in n]\n\
          assert bundled, f'no bundled shared libraries found in the wheel: {{names}}'\n\
          assert any('libhighs' in n.lower() for n in bundled), \\\n\
-             f'libhighs missing from the bundled libraries: {{bundled}}'\n",
+             f'libhighs missing from the bundled libraries: {{bundled}}'\n\
+         junk = ('libasan', 'libtsan', 'libubsan', 'liblsan', 'libhwasan',\n\
+                 'libobjc', 'libitm')\n\
+         found = [n for n in bundled\n\
+                  if any(j in n.lower() for j in junk) or n.endswith('.a')]\n\
+         assert not found, f'unused libraries bundled into the wheel: {{found}}'\n",
         wheel = wheel_path.display(),
     );
     let check = Command::new(&venv.python)
