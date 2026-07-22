@@ -55,3 +55,58 @@ jobs:
       # and meson compile against it. See tests/e2e_meson.rs.
       - name: Run the real Meson end-to-end test
         run: cargo test --test e2e_meson -- --ignored
+
+  # Runs tests/e2e_real_jll.rs: syncs the committed lockfiles in
+  # tests/projects/ against real, published JLL tarballs, then builds and
+  # runs against them for real (plain Meson for SuiteSparse, a meson-python
+  # wheel for HiGHS). Kept as its own job, separate from `e2e` above, so a
+  # network flake or a JuliaBinaryWrappers outage never masks a genuine
+  # failure in the offline-tarball e2e tier.
+  e2e-real-jll:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # MESON_PACKAGE_CACHE_DIR redirects Meson's downloaded-tarball cache out
+    # of each fixture's own subprojects/packagecache and into one directory
+    # shared by both fixtures in this job, so CompilerSupportLibraries
+    # (~18MB, and a dependency of both) is only ever downloaded once per run.
+    env:
+      MESON_PACKAGE_CACHE_DIR: ${{ github.workspace }}/.meson-package-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install Meson, Ninja, and meson-python
+        run: pip install meson ninja meson-python
+
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # Caches the shared Meson package cache above, and this crate's own
+      # per-commit JLL metadata cache (see src/cache.rs, which uses the
+      # `dirs` crate and so lands in a different place per OS). Keyed on
+      # the two fixtures' lockfiles: bumping either invalidates both, since
+      # a version change can pull in a different CompilerSupportLibraries
+      # build either fixture might now share. A path that does not exist
+      # on the current OS is simply skipped by actions/cache, so listing
+      # all three OS-specific locations here is harmless.
+      - name: Cache downloaded JLL tarballs and metadata
+        uses: actions/cache@v4
+        with:
+          path: |
+            .meson-package-cache
+            ~/.cache/meson-jll
+            ~/Library/Caches/meson-jll
+            ~/AppData/Local/meson-jll
+          key: e2e-real-jll-${{ runner.os }}-${{ hashFiles('tests/projects/*/meson-jll.lock') }}
+
+      - name: Run the real-JLL end-to-end tests
+        run: cargo test --test e2e_real_jll -- --ignored
