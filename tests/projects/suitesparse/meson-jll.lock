@@ -1,0 +1,19 @@
+version = 1
+
+[roots]
+SuiteSparse = "7.0.1+0"
+
+[[package]]
+name = "CompilerSupportLibraries"
+version = "1.5.5+2"
+dependencies = []
+
+[[package]]
+name = "SuiteSparse"
+version = "7.0.1+0"
+dependencies = ["libblastrampoline"]
+
+[[package]]
+name = "libblastrampoline"
+version = "5.15.0+0"
+dependencies = []

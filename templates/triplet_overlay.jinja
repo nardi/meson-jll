@@ -1,44 +1,77 @@
 project('{{ name }}', 'c')
 
 cc = meson.get_compiler('c')
-# The tarball is never downloaded ahead of time, so whether it ships headers
-# is unknown until Meson has actually extracted it. Checking here, after
-# extraction, avoids guessing in the generator.
+{#- The tarball is never downloaded ahead of time, so whether it ships headers
+is unknown until Meson has actually extracted it. Checking here, after
+extraction, avoids guessing in the generator. #}
 fs = import('fs')
 include_dirs = []
 if fs.is_dir('include')
   include_dirs = [include_directories('include')]
-  # Some JLLs (SuiteSparse and HiGHS both do) namespace their headers under
-  # include/<lowercased-package-name>/ instead of flat under include/, to
-  # avoid collisions between generically named headers from different JLLs.
-  # Nothing in the JLL's own metadata says which convention it follows, so
-  # both are added when present, covering `#include <SuiteSparse_config.h>`
-  # and `#include <suitesparse/SuiteSparse_config.h>` alike.
+  {#- Some JLLs (SuiteSparse and HiGHS both do) namespace their headers under
+  include/<lowercased-package-name>/ instead of flat under include/, to
+  avoid collisions between generically named headers from different JLLs.
+  Nothing in the JLL's own metadata says which convention it follows, so
+  both are added when present, covering `#include <SuiteSparse_config.h>`
+  and `#include <suitesparse/SuiteSparse_config.h>` alike. #}
   if fs.is_dir('include/{{ namespaced_include_dir }}')
     include_dirs += [include_directories('include/{{ namespaced_include_dir }}')]
   endif
 endif
 
-{% if is_windows %}
-# Julia's Windows binaries are built with MinGW-w64 GCC, whose .dll.a
-# import libraries are a GNU ar archive format MSVC's linker cannot read
-# at all. When the active compiler turns out to be MSVC and a library has
-# no native .lib of its own, dll_to_lib.py regenerates one straight from
-# that DLL's own export table using dumpbin and lib.exe, both already on
-# PATH as part of the same MSVC installation Meson activated to find `cc`
-# in the first place. This runs at Meson build time, once per library that
-# actually needs it, never while meson-jll itself is generating this file.
-#
-# The script lives once in packagefiles/, a directory up from every
-# triplet overlay, rather than a copy inside each one: every Windows
-# platform of every JLL shares this exact same file.
-is_msvc = cc.get_id() == 'msvc'
+{#- Meson itself is a Python program, so a python3 interpreter is always
+present somewhere on this machine, but not necessarily the one that
+`python3` on PATH resolves to (or even present under that name at all),
+so this is still found the ordinary way rather than assumed. Used below
+by the MSVC import-lib workaround (Windows only). #}
 python3 = find_program('python3', 'python', required: false)
+
+{% if is_windows %}
+{#- Julia's Windows binaries are built with MinGW-w64 GCC, whose .dll.a
+import libraries are a GNU ar archive format MSVC's linker cannot read
+at all. When the active compiler turns out to be MSVC and a library has
+no native .lib of its own, dll_to_lib.py regenerates one straight from
+that DLL's own export table using dumpbin and lib.exe, both already on
+PATH as part of the same MSVC installation Meson activated to find `cc`
+in the first place. This runs at Meson build time, once per library that
+actually needs it, never while meson-jll itself is generating this file.
+
+The script lives once in packagefiles/, a directory up from every
+triplet overlay, rather than a copy inside each one: every Windows
+platform of every JLL shares this exact same file. #}
+is_msvc = cc.get_id() == 'msvc'
 dll_to_lib = meson.current_source_dir() / '..' / 'packagefiles' / 'dll_to_lib.py'
 {% endif %}
 
-# One cc.find_library() per library this platform's wrapper script
-# declares, using the exact path Julia itself records for it.
+{#- One cc.find_library() per library this platform's wrapper script
+declares, using the exact path Julia itself records for it.
+
+Not every product resolves under its plain, unversioned name: a JLL tarball
+is not required to ship a dev symlink (macOS libgcc_s in
+CompilerSupportLibraries_jll has only the versioned libgcc_s.1.1.dylib,
+while sibling products in the same tarball do get one) or a MinGW import
+lib (libssp in the same JLL ships bin/libssp-0.dll with no lib/libssp-0.dll.a
+at all, unlike every other product there). find_library() defaults to
+required: true, so either case would otherwise abort the whole configure.
+
+required: false plus a declare_dependency(link_args: [...]) fallback,
+straight at the exact file Julia's own wrapper already names (lib.path),
+covers both: GNU ld and Apple ld both link fine against a shared library
+or DLL given by full path, no dev symlink or import lib needed. This is
+only a fallback, not the default, since find_library() finding a real
+import lib on Windows still matters for a product that exports data
+symbols (linking straight against a DLL there can silently resolve to a
+thunk address instead of the variable itself); it makes no difference for
+a function-only export like libssp. #}
+{% macro find_or_link_by_path(lib) %}
+{{ lib.variable }} = cc.find_library('{{ lib.link_name }}', dirs: meson.current_source_dir() / 'lib', required: false)
+if not {{ lib.variable }}.found()
+  if not fs.is_file('{{ lib.path }}')
+    error('{{ name }}: no linkable {{ lib.link_name }} in lib/, and {{ lib.path }} is missing from the extracted tarball')
+  endif
+  {{ lib.variable }} = declare_dependency(link_args: [meson.current_source_dir() / '{{ lib.path }}'])
+endif
+{% endmacro %}
 {% for lib in library_products %}
 {% if is_windows %}
 if is_msvc and python3.found() and fs.is_file('{{ lib.path }}') and not fs.is_file('lib/{{ lib.link_name }}.lib')
@@ -50,37 +83,195 @@ if is_msvc and python3.found() and fs.is_file('{{ lib.path }}') and not fs.is_fi
   )
   {{ lib.variable }} = declare_dependency(link_with: {{ lib.variable }}_import_lib)
 else
-  {{ lib.variable }} = cc.find_library('{{ lib.link_name }}', dirs: meson.current_source_dir() / 'lib')
+  {%- call find_or_link_by_path(lib) %}
 endif
 {% else %}
-{{ lib.variable }} = cc.find_library('{{ lib.link_name }}', dirs: meson.current_source_dir() / 'lib')
+{%- call find_or_link_by_path(lib) %}
 {% endif %}
 {% endfor %}
 
-# Transitive JLL dependencies, resolved the same way this package itself
-# is: through their own selector wrap's [provide] fallback.
+{#- Transitive JLL dependencies, resolved the same way this package itself
+is: through their own selector wrap's [provide] fallback. The `_jll`
+suffix on the dependency name is what keeps this from silently binding to
+a same-named system library (a system zlib exists almost everywhere): no
+system package advertises itself as `Zlib_jll`, so only the wrap can
+satisfy it. #}
 {% for dep in jll_dependencies %}
-{{ dep }}_dep = dependency('{{ dep }}')
+{{ dep }}_dep = dependency('{{ dep }}_jll')
 {% endfor %}
 
-# Install this platform's own runtime libraries, the same as
-# `library('z', ..., install: true)` in an ordinary Meson project. They go
-# to libdir, which is where meson-python folds a wheel's bundled shared
-# libraries from (into `.<project>.mesonpy.libs`), and where an rpath entry
-# points on the platforms that have one. On Windows the whole `bin`
-# directory is installed rather than only the declared products, because
-# the MinGW runtime DLLs those depend on (`libwinpthread-1.dll` and friends,
-# provided by CompilerSupportLibraries) ship there without ever being
-# declared as products of their own, and would otherwise be left out.
+{#- Whether the declared library products below get stripped (a much
+smaller install: JLL binaries ship unstripped, and libstdc++ alone
+commonly carries ten times its stripped size in symbols). Meson's own
+-Dstrip cannot do this by itself: it only strips targets Meson itself
+compiled, never a file install_subdir copies in verbatim.
+
+This silently does nothing, same as the MSVC workaround above, when no
+strip tool is found.
+A strip tool is not always able to parse every binary it is pointed at
+either (llvm-strip has been observed to reject some MinGW-built binaries
+outright that it can still link against fine), so the actual stripping
+goes through strip_or_copy.py (shared the same way dll_to_lib.py is),
+which falls back to a plain copy on failure rather than taking the whole
+build down over a library that was always going to ship unstripped
+anyway. #}
+strip_tool = find_program('llvm-strip', 'strip', required: false)
+should_strip = get_option('strip') and python3.found() and strip_tool.found()
+strip_or_copy = meson.current_source_dir() / '..' / 'packagefiles' / 'strip_or_copy.py'
+
+{#- Install this platform's own runtime libraries, the same as
+`library('z', ..., install: true)` in an ordinary Meson project. They go
+to libdir, which is where meson-python folds a wheel's bundled shared
+libraries from (into `.<project>.mesonpy.libs`), and where an rpath entry
+points on the platforms that have one.
+
+Only what a declared product actually needs is installed, worked out by
+prune_unused_libs.py (shared the same way strip_or_copy.py is) from the
+extracted tarball itself. A JLL tarball carries a good deal more than a
+consumer does: CompilerSupportLibraries declares six products on Linux,
+but its lib/ also holds the GCC sanitizer runtimes, the Objective-C
+runtime, and libitm, none of which a normal build ever loads. Installing
+the directory wholesale put roughly 90MB of that into one real consumer's
+wheel.
+
+Installing only the declared products instead would be wrong in the other
+direction: a tarball also ships the undeclared transitive libraries those
+products themselves need (libquadmath behind libgfortran, the MinGW
+libwinpthread-1.dll and friends behind the rest), which no JLL declares
+anywhere, and dropping those leaves the loader unable to satisfy them at
+import time. The reachable set is the closure over both, which needs the
+real files on disk, hence a configure-time script rather than something
+meson-jll could have decided while generating this file.
+
+The files come back named as they sit in the tarball, so the name the
+loader actually records as a dependency (libhighs.so.1, not the
+unversioned dev link libhighs.so) is the one installed, which is what a
+wheel needs.
+
+Should anything go wrong (no python3, no inspection tool for this
+platform, a binary nothing can parse), the whole runtime directory is
+installed exactly as it always was. Pruning is an optimization, never a
+correctness requirement, so a failure here has to fall back to shipping
+too much rather than too little.
+
+When stripping, each declared product is left out of this install and
+installed separately below instead, as a stripped copy under the same
+final name. #}
 {% if is_windows %}
-install_subdir('bin', install_dir: get_option('libdir'), strip_directory: true)
+runtime_dir_name = 'bin'
 {% else %}
-{% for lib in library_products %}
-install_data('{{ lib.path }}', install_dir: get_option('libdir'))
-{% endfor %}
+runtime_dir_name = 'lib'
 {% endif %}
+runtime_dir = meson.current_source_dir() / runtime_dir_name
+prune_unused_libs = meson.current_source_dir() / '..' / 'packagefiles' / 'prune_unused_libs.py'
+
+{#- The declared products are the roots the reachable set is grown from.
+A JLL's own CLI tools (highs.exe alongside libhighs.dll, say) sit in the
+same directory but are not reachable from any library, so they drop out
+here on their own, without needing to be named. #}
+reachable_libs = []
+if python3.found()
+  prune_result = run_command(
+    python3,
+    prune_unused_libs,
+    runtime_dir,
+{% for lib in library_products %}
+    '{{ lib.basename }}',
+{% endfor %}
+    check: false,
+  )
+  if prune_result.returncode() == 0
+    foreach line : prune_result.stdout().split('\n')
+      name = line.strip()
+      if name != ''
+        reachable_libs += name
+      endif
+    endforeach
+  endif
+endif
+
+stripped_separately = should_strip ? [{% for lib in library_products %}'{{ lib.basename }}',{% endfor %}] : []
+
+if reachable_libs.length() > 0
+{#- Every reachable library is stripped here, not only the declared
+products: the set is known by name at this point, so the usual limitation
+(Meson cannot enumerate an unknown set of files at configure time) does
+not apply, and libquadmath and friends get stripped along with the rest.
+Each has to be its own custom_target for the same reason described below:
+meson-python reads Meson's static install plan, so a build-time target is
+the only form of "install this instead" it can see. #}
+  install_libs = []
+  foreach name : reachable_libs
+    if should_strip
+      custom_target(
+        name + '-stripped',
+        input: runtime_dir_name / name,
+        output: name,
+        command: [python3, strip_or_copy, strip_tool.full_path(), '@INPUT@', '@OUTPUT@'],
+        install: true,
+        install_dir: get_option('libdir'),
+      )
+    else
+      install_libs += runtime_dir_name / name
+    endif
+  endforeach
+  if install_libs.length() > 0
+    install_data(install_libs, install_dir: get_option('libdir'))
+  endif
+else
+{#- The fallback: the whole runtime directory, as before pruning existed.
+On Windows the JLL's own CLI tools have to be named to be excluded here,
+since nothing has worked out what is reachable. On the other platforms the
+sibling cmake/ and pkgconfig/ trees, and the compiler support files under
+gcc/, are build-time only and would just bloat the wheel. #}
+{% if is_windows %}
+  install_subdir(
+    'bin',
+    install_dir: get_option('libdir'),
+    strip_directory: true,
+    exclude_files: [{% for exe in windows_executable_basenames %}'{{ exe }}', {% endfor %}] + stripped_separately,
+  )
+{% else %}
+  install_subdir(
+    'lib',
+    install_dir: get_option('libdir'),
+    strip_directory: true,
+    exclude_directories: ['cmake', 'pkgconfig', 'gcc'],
+    exclude_files: stripped_separately,
+  )
+{% endif %}
+
+{#- The stripped copy of each declared product, installed under the exact
+name install_subdir excluded just above (see why: this is a custom_target,
+a real build output Meson knows about ahead of time, unlike
+add_install_script. meson-python's own wheel-building never actually
+runs `meson install`: it reads Meson's static install plan and copies
+those files straight from the build tree, so an install script, which
+produces no such advance listing, is invisible to it, and silently never
+runs for a wheel build. A build-time target is the only form of "install
+this instead" meson-python can see.
+
+Only the declared products can be reached this way here, since without a
+pruned list nothing has enumerated the rest, so libquadmath and friends
+come along unstripped. The pruned path above has no such limit. #}
+{% for lib in library_products %}
+  if should_strip
+    custom_target(
+      '{{ lib.link_name }}-stripped',
+      input: '{{ lib.path }}',
+      output: '{{ lib.basename }}',
+      command: [python3, strip_or_copy, strip_tool.full_path(), '@INPUT@', '@OUTPUT@'],
+      install: true,
+      install_dir: get_option('libdir'),
+    )
+  endif
+{% endfor %}
+endif
 
 {{ dependency_variable }} = declare_dependency(
+  {#- The JLL's own release version, so a consumer can pin it, for example
+  dependency('HiGHS_jll', version: '>=1.15.0'). #}
+  version: '{{ version }}',
   include_directories: include_dirs,
   dependencies: [
 {% for lib in library_products %}

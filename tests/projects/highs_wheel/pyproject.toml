@@ -1,0 +1,18 @@
+[build-system]
+requires = ["meson-python"]
+build-backend = "mesonpy"
+
+[project]
+name = "demo-ext"
+version = "0.1.0"
+
+[tool.meson-python]
+# The JLL subprojects install their DLLs to libdir, which meson-python
+# folds into .demo_ext.mesonpy.libs inside the wheel. Loading shared
+# libraries from there on Windows needs this opt-in plus the DLL search
+# path cooperation in demo_ext/__init__.py, per the meson-python
+# shared-libraries guide.
+allow-windows-internal-shared-libs = true
+
+[tool.meson-python.args]
+setup = ["-Dstrip=true"]

@@ -89,3 +89,35 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
+
+  # Publishes the crate to crates.io. Gated on the same end-to-end test as
+  # the binary release, so a version that does not actually work with Meson
+  # is never published under either channel. Kept separate from the GitHub
+  # release job so a crates.io hiccup does not block the binary artifacts,
+  # and vice versa. Needs a CARGO_REGISTRY_TOKEN secret with publish rights.
+  publish-crate:
+    needs: e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # Refuses to publish if the tag and the crate version disagree, so a
+      # mistyped tag fails loudly here rather than publishing the wrong
+      # version. The tag is vX.Y.Z, the manifest version is X.Y.Z.
+      - name: Check the tag matches the crate version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          crate="$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          if [ "$tag" != "$crate" ]; then
+            echo "tag $GITHUB_REF_NAME does not match crate version $crate" >&2
+            exit 1
+          fi
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish

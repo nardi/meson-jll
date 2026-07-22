@@ -30,11 +30,15 @@ declares SuiteSparse as an ordinary dependency:
 
 ```python
 project('demo', 'c')
-suitesparse = dependency('SuiteSparse')
+suitesparse = dependency('SuiteSparse_jll')
 executable('demo', 'demo.c', dependencies: suitesparse)
 ```
 
-On its own, that `dependency('SuiteSparse')` call fails, because Meson has
+The `_jll` suffix on the name is deliberate. It is what a JLL wrap provides,
+kept distinct from a bare `SuiteSparse` so the call can never bind by
+accident to an unrelated system library of the same name.
+
+On its own, that `dependency('SuiteSparse_jll')` call fails, because Meson has
 no idea where to find SuiteSparse. We provide it by generating a wrap set
 from the JLL:
 
@@ -44,7 +48,7 @@ $ meson-jll install SuiteSparse
 
 This writes a set of wrap files into `subprojects/`, one describing
 SuiteSparse and one for every JLL it depends on. Nothing else in the project
-changes. The `dependency('SuiteSparse')` call now resolves to the generated
+changes. The `dependency('SuiteSparse_jll')` call now resolves to the generated
 wrap, and a normal Meson build downloads the one binary that matches the
 current machine and links against it:
 
@@ -83,7 +87,7 @@ SuiteSparse wrap, exactly as the C example did:
 ```python
 project('demo_ext', 'c')
 python = import('python').find_installation()
-suitesparse = dependency('SuiteSparse')
+suitesparse = dependency('SuiteSparse_jll')
 python.extension_module(
     '_demo',
     '_demo.c',
@@ -102,3 +106,26 @@ From then on the package builds and installs with the usual Python tooling,
 for example `pip install .`, and the SuiteSparse binary is fetched and
 linked as part of that build. The wrap set lives in `subprojects/` and is
 committed alongside the rest of the package.
+
+### Repairing the built wheel
+
+A wheel built this way bundles the whole JLL, not only the symbols the
+extension actually calls, so it is worth running it through the platform's
+wheel repair tool before publishing:
+
+```shell
+$ python -m build --wheel
+$ auditwheel repair dist/*.whl       # Linux
+$ delocate-wheel -w dist_fixed dist/*.whl  # macOS
+$ delvewheel repair dist/*.whl       # Windows
+```
+
+These tools prune to the libraries the wheel's own extension actually
+depends on, dropping anything meson-jll bundled defensively but nothing ended
+up needing. They can also strip debug information, which JLL binaries ship
+with in full and which is often the largest part of the wheel by far. Passing
+`-Dstrip=true` (for example `pip install . --config-settings=setup-args=-Dstrip=true`
+with meson-python) does this earlier, at build time, for every library each
+bundled JLL actually declares as a product (see [internals](crate::internals)
+for the one case this cannot reach), rather than leaving it to the repair
+step.

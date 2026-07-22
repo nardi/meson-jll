@@ -1,10 +1,10 @@
-# This platform's tarball, straight from the JLL's own release assets.
+{# This platform's tarball, straight from the JLL's own release assets. -#}
 [wrap-file]
 directory = {{ directory }}
 source_url = {{ source_url }}
 source_filename = {{ source_filename }}
 source_hash = {{ source_hash }}
-# The JLL's tarballs are flat archives with no leading directory.
+{#- The JLL's tarballs are flat archives with no leading directory. #}
 lead_directory_missing = true
-# Drops in the meson.build this platform's tarball does not ship.
+{#- Drops in the meson.build this platform's tarball does not ship. #}
 patch_directory = {{ directory }}

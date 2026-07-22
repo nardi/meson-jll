@@ -61,9 +61,18 @@ maintained under, in order to keep to a consistent style and structure.
   `meson compile` against it. It is marked `#[ignore]` because it needs Meson,
   Ninja, and a compiler on `PATH`, and runs in CI (`ci.yml`, the `e2e` job)
   across Linux, macOS, and Windows rather than on every local `cargo test`.
+- `tests/e2e_real_jll.rs` is the one tier that touches the network: it syncs
+  the fixture projects in `tests/projects/` (each pinned by its own
+  `meson-jll.lock`) against real, published JLL tarballs, then builds and
+  runs against them for real, once with plain Meson (`SuiteSparse`) and once
+  as a `meson-python` wheel (`HiGHS`). Only this tier can catch a bug caused
+  by what a real tarball actually contains rather than by a hand-written
+  fixture's assumptions about one. Marked `#[ignore]` and run in CI as its
+  own job (`e2e-real-jll`), separate from `e2e`, so a network flake never
+  masks a genuine offline-tier failure.
 - Before committing: `cargo test`, `cargo fmt --check`, and
   `cargo clippy --all-targets -- -D warnings` should all be clean. CI runs
-  the same three checks, plus the end-to-end job, on every push and pull
+  the same three checks, plus both end-to-end jobs, on every push and pull
   request.
 
 ## Commits

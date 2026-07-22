@@ -20,6 +20,9 @@ use std::process::Command;
 use meson_jll::jll::triplet::{Arch, Libc, Os, Triplet};
 use sha2::{Digest, Sha256};
 
+mod common;
+use common::assert_success;
+
 /// The Julia-side platform selectors for the machine running this test, in
 /// the vocabulary `Artifacts.toml` itself uses (`x86_64`/`aarch64`,
 /// `linux`/`macos`/`windows`, `glibc`). Kept as plain strings independent
@@ -225,19 +228,19 @@ end
     )
     .unwrap();
 
-    let status = Command::new(env!("CARGO_BIN_EXE_meson-jll"))
+    let install = Command::new(env!("CARGO_BIN_EXE_meson-jll"))
         .args(["install", "ExampleThing", "--url"])
         .arg(&fixture_dir)
         .arg("--subprojects-dir")
         .arg(consumer_dir.join("subprojects"))
-        .status()
+        .output()
         .expect("could not run the meson-jll binary");
-    assert!(status.success(), "meson-jll install failed");
+    assert_success(&install, "meson-jll install");
 
     fs::write(
         consumer_dir.join("meson.build"),
         "project('e2e-demo', 'c')\n\
-         example = dependency('ExampleThing')\n\
+         example = dependency('ExampleThing_jll')\n\
          executable('demo', 'demo.c', dependencies: example)\n",
     )
     .unwrap();
@@ -254,24 +257,14 @@ end
         .current_dir(&consumer_dir)
         .output()
         .expect("could not run meson setup (is meson on PATH?)");
-    assert!(
-        setup.status.success(),
-        "meson setup failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&setup.stdout),
-        String::from_utf8_lossy(&setup.stderr),
-    );
+    assert_success(&setup, "meson setup");
 
     let compile = Command::new("meson")
         .args(["compile", "-C"])
         .arg(&build_dir)
         .output()
         .expect("could not run meson compile");
-    assert!(
-        compile.status.success(),
-        "meson compile failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr),
-    );
+    assert_success(&compile, "meson compile");
 
     let demo_name = if cfg!(windows) { "demo.exe" } else { "demo" };
     let run_status = Command::new(build_dir.join(demo_name))
