@@ -165,6 +165,248 @@ if __name__ == "__main__":
     main()
 "#;
 
+/// The name `PRUNE_UNUSED_LIBS_SCRIPT` is written under, directly in
+/// `packagefiles/`, shared the same way [`DLL_TO_LIB_FILENAME`] is.
+pub const PRUNE_UNUSED_LIBS_FILENAME: &str = "prune_unused_libs.py";
+
+/// A small, generic Python script that works out which files in a JLL's
+/// runtime directory are actually reachable from its declared library
+/// products, so the rest can be left out of the install (see the "install"
+/// section of `triplet_overlay.jinja`, the only place this is invoked
+/// from, at Meson configure time).
+///
+/// This exists because a JLL tarball ships considerably more than the
+/// libraries a consumer needs. CompilerSupportLibraries declares six
+/// products on Linux but its `lib/` also carries the GCC sanitizer
+/// runtimes (`libasan`, `libtsan`, `libubsan`, `liblsan`, `libhwasan`),
+/// the Objective-C runtime, and `libitm`, none of which a normal build
+/// ever loads. Installing the whole directory put roughly 90MB of that
+/// into one real consumer's wheel.
+///
+/// Simply installing only the declared products instead is not correct
+/// either: a tarball also ships the undeclared transitive libraries those
+/// products themselves need (`libquadmath` behind `libgfortran` being the
+/// standard example), which no JLL declares anywhere. What is wanted is
+/// the declared products plus their real transitive closure, which can
+/// only be computed once the tarball is actually extracted, hence a
+/// build-time script rather than anything meson-jll could decide while
+/// generating.
+///
+/// The closure is read with whichever inspection tool the platform's own
+/// toolchain already provides, rather than by parsing ELF/Mach-O/PE here.
+/// This follows Meson's own precedent: `mesonbuild/scripts/depfixer.py`
+/// hand-rolls an ELF parser only because it needs to rewrite RPATHs in
+/// place, and shells out to `otool` on macOS, while
+/// `mesonbuild/scripts/symbolextractor.py` shells out to `otool`,
+/// `dumpbin`, and `nm` for read-only inspection exactly like this does.
+const PRUNE_UNUSED_LIBS_SCRIPT: &str = r#"#!/usr/bin/env python3
+"""Prints the transitive closure of the runtime libraries reachable from a
+set of root files, one file name per line. See the meson-jll comment that
+generated this file for why this exists.
+
+Anything in the directory that no root actually needs is simply not
+printed, and so is not installed by the caller.
+
+Usage: prune_unused_libs.py <search-dir> <root-file> [<root-file> ...]
+"""
+import os
+import re
+import subprocess
+import sys
+
+
+def run_tool(command):
+    """Runs an inspection tool, returning its stdout, or None if the tool
+    is missing or fails on this particular file."""
+    try:
+        result = subprocess.run(command, capture_output=True, text=True)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def elf_info(path):
+    """(soname, needed) for an ELF file. readelf and objdump are both
+    binutils, but a toolchain may carry only the LLVM spelling of either,
+    so all four are tried in turn."""
+    for tool in ("readelf", "llvm-readelf"):
+        output = run_tool([tool, "-d", path])
+        if output is not None:
+            soname = re.search(r"\(SONAME\)\s+Library soname: \[([^\]]+)\]", output)
+            return (
+                soname.group(1) if soname else None,
+                re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", output),
+            )
+    for tool in ("objdump", "llvm-objdump"):
+        output = run_tool([tool, "-p", path])
+        if output is not None:
+            soname = re.search(r"^\s*SONAME\s+(\S+)", output, re.MULTILINE)
+            return (
+                soname.group(1) if soname else None,
+                re.findall(r"^\s*NEEDED\s+(\S+)", output, re.MULTILINE),
+            )
+    return (None, [])
+
+
+def macho_info(path):
+    """(install name, needed) for a Mach-O file. `otool -L` prints the
+    file's own install name first, then one line per linked dylib, each
+    as "<name> (compatibility version ...)"."""
+    for tool in ("otool", "llvm-otool"):
+        output = run_tool([tool, "-L", path])
+        if output is not None:
+            lines = [line.strip() for line in output.splitlines()[1:] if line.strip()]
+            if not lines:
+                return (None, [])
+            names = [os.path.basename(line.split(" ", 1)[0]) for line in lines]
+            return (names[0], names[1:])
+    return (None, [])
+
+
+def pe_info(path):
+    """(None, needed) for a PE file, via dumpbin (MSVC) or objdump
+    (MinGW), whichever is present. A DLL has no soname: the name importers
+    record is the file name itself."""
+    output = run_tool(["dumpbin", "/dependents", path])
+    if output is not None:
+        return (
+            None,
+            [
+                line.strip()
+                for line in output.splitlines()
+                if line.strip().lower().endswith(".dll")
+            ],
+        )
+    for tool in ("objdump", "llvm-objdump"):
+        output = run_tool([tool, "-p", path])
+        if output is not None:
+            return (None, re.findall(r"DLL Name:\s*(\S+)", output))
+    return (None, [])
+
+
+# The first bytes of each binary format this knows how to read. Sniffing
+# the file itself, rather than assuming every file matches the host, keeps
+# one code path for all three and means a cross-built tarball is read
+# correctly rather than silently yielding nothing.
+MAGICS = (
+    (b"\x7fELF", elf_info),
+    (b"MZ", pe_info),
+    (b"\xcf\xfa\xed\xfe", macho_info),
+    (b"\xce\xfa\xed\xfe", macho_info),
+    (b"\xca\xfe\xba\xbe", macho_info),
+)
+
+
+def binary_info(path):
+    """(canonical name, needed names) for one file, or (None, []) if it is
+    not a binary this knows, or no tool could parse it."""
+    try:
+        with open(path, "rb") as handle:
+            magic = handle.read(4)
+    except OSError:
+        return (None, [])
+    for prefix, reader in MAGICS:
+        if magic.startswith(prefix):
+            return reader(path)
+    return (None, [])
+
+
+def linker_script_names(path, present):
+    """The library names a GNU ld linker script refers to. `libgcc_s.so`
+    in CompilerSupportLibraries is not a binary at all but a 132-byte text
+    script reading `INPUT ( libgcc_s.so.1 -lgcc )`, so following it is what
+    reaches the real library behind it."""
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(4096)
+    except OSError:
+        return []
+    if head[:1] != b"/" and b"GROUP" not in head and b"INPUT" not in head:
+        return []
+    try:
+        text = head.decode("utf-8", "replace")
+    except ValueError:
+        return []
+    # The script's own name is skipped: it is a prefix of the versioned
+    # library it points at (`libgcc_s.so` of `libgcc_s.so.1`), so it would
+    # otherwise always match itself and install the script text alongside
+    # the real library it exists only to redirect to.
+    own_name = os.path.basename(path)
+    return [name for name in present if name != own_name and name in text]
+
+
+def main():
+    search_dir = sys.argv[1]
+    roots = sys.argv[2:]
+
+    # Only files actually present in this directory are ever considered. A
+    # dependency on a system library (libc and friends) resolves to
+    # nothing here, which is correct: those are not ours to install.
+    present = {
+        name
+        for name in os.listdir(search_dir)
+        if os.path.isfile(os.path.join(search_dir, name))
+    }
+
+    understood_any = False
+
+    def resolve(name):
+        """(name to install this file under, names it needs). A library is
+        installed under its soname, never under the unversioned
+        development symlink pointing at it: the soname is the name a
+        consumer's own DT_NEEDED records, and so the only name the loader
+        ever asks for. Julia's wrapper scripts name products by that
+        unversioned link (`lib/libgomp.so`), so without this the install
+        would carry the one name nothing ever looks up.
+
+        The name is None for a file that stands in for a library without
+        being one, namely a GNU ld script: it is followed, but installing
+        the script text itself would be meaningless."""
+        nonlocal understood_any
+        path = os.path.join(search_dir, name)
+        canonical, needed = binary_info(path)
+        if canonical is not None or needed:
+            understood_any = True
+            return (canonical if canonical in present else name), needed
+        return None, linker_script_names(path, present)
+
+    reached = set()
+    seen = set()
+    queue = []
+    for root in roots:
+        name = os.path.basename(root)
+        if name in present:
+            queue.append(name)
+
+    while queue:
+        current = queue.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        canonical, needed = resolve(current)
+        if canonical is not None:
+            reached.add(canonical)
+        for name in needed:
+            if name in present and name not in seen:
+                queue.append(name)
+
+    # Nothing could be parsed at all (no inspection tool for this
+    # platform, say), so the result would be meaningless. Exiting
+    # non-zero leaves the caller installing everything, as it did before
+    # pruning existed.
+    if not understood_any:
+        sys.exit(1)
+
+    for name in sorted(reached):
+        print(name)
+
+
+if __name__ == "__main__":
+    main()
+"#;
+
 /// Writes the full wrap set for `package` into `subprojects_dir` (normally
 /// a project's `subprojects/` directory).
 ///
@@ -175,6 +417,7 @@ pub fn write_wrap_set(package: &JllPackage, subprojects_dir: &Path, force: bool)
 
     write_empty_tar(subprojects_dir)?;
     write_strip_or_copy_script(subprojects_dir)?;
+    write_prune_unused_libs_script(subprojects_dir)?;
     write_selector_wrap(package, subprojects_dir, force)?;
     write_selector_overlay(package, &dependency_variable_name, subprojects_dir, force)?;
     write_options(package, subprojects_dir, force)?;
@@ -258,6 +501,26 @@ fn write_strip_or_copy_script(subprojects_dir: &Path) -> Result<()> {
         })?;
     }
     fs::write(&path, insert_marker_after_shebang(STRIP_OR_COPY_SCRIPT))
+        .map_err(|source| Error::WriteFile { path, source })
+}
+
+/// Writes the shared `prune_unused_libs.py`, if it is not already there.
+/// Referenced by every platform's triplet overlay, the same as
+/// [`write_strip_or_copy_script`].
+fn write_prune_unused_libs_script(subprojects_dir: &Path) -> Result<()> {
+    let path = subprojects_dir
+        .join("packagefiles")
+        .join(PRUNE_UNUSED_LIBS_FILENAME);
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| Error::CreateDirectory {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    fs::write(&path, insert_marker_after_shebang(PRUNE_UNUSED_LIBS_SCRIPT))
         .map_err(|source| Error::WriteFile { path, source })
 }
 

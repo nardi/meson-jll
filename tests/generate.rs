@@ -127,10 +127,25 @@ fn generates_a_full_wrap_set_from_a_fixture_jll() {
     // The declared dependency carries the JLL's full release version so a
     // consumer can pin it.
     assert!(linux_overlay.contains("version: '1.2.3+0'"));
-    // The whole lib/ runtime directory is installed, not just the declared
-    // products, so undeclared transitive runtime libraries come along too.
+    // Only what a declared product actually needs is installed, worked out
+    // at configure time by prune_unused_libs.py against the extracted
+    // tarball. A JLL ships a good deal a consumer never loads: the GCC
+    // sanitizer runtimes in CompilerSupportLibraries alone were ~90MB of
+    // one real wheel.
+    assert!(linux_overlay.contains("prune_unused_libs"));
+    assert!(linux_overlay.contains("install_data(install_libs, install_dir: get_option('libdir'))"));
+    // The whole runtime directory is still installed when nothing could be
+    // pruned (no python3, no inspection tool, an unparseable binary), since
+    // shipping too much is only wasteful while shipping too little is
+    // broken.
     assert!(linux_overlay.contains("install_subdir("));
     assert!(linux_overlay.contains("exclude_directories: ['cmake', 'pkgconfig', 'gcc']"));
+    // The script itself is written once, next to the other shared scripts,
+    // rather than copied into every triplet overlay.
+    assert!(output_dir
+        .path()
+        .join("packagefiles/prune_unused_libs.py")
+        .exists());
     // Stripping is gated on -Dstrip and a strip tool being found, and (since
     // meson-python's wheel builder never sees an add_install_script) is a
     // real build-time custom_target per declared product, not a post-install
@@ -144,10 +159,15 @@ fn generates_a_full_wrap_set_from_a_fixture_jll() {
     assert!(linux_overlay.contains(
         "command: [python3, strip_or_copy, strip_tool.full_path(), '@INPUT@', '@OUTPUT@']"
     ));
-    // The bulk directory install excludes each declared product's own file
-    // only once stripping is actually active, so the unstripped file is
-    // never present alongside its stripped custom_target replacement.
-    assert!(linux_overlay.contains("exclude_files: should_strip ? ['libexample.so'"));
+    // The fallback's bulk directory install excludes each declared
+    // product's own file only once stripping is actually active, so the
+    // unstripped file is never present alongside its stripped
+    // custom_target replacement.
+    assert!(linux_overlay.contains("exclude_files: stripped_separately"));
+    assert!(linux_overlay.contains("stripped_separately = should_strip ? ['libexample.so'"));
+    // On the pruned path every reachable library is stripped, not only the
+    // declared products, since the set is known by name at that point.
+    assert!(linux_overlay.contains("name + '-stripped'"));
 
     // This fixture never splits a platform by ABI, so no options file.
     assert!(!output_dir
