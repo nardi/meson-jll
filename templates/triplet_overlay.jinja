@@ -44,7 +44,34 @@ dll_to_lib = meson.current_source_dir() / '..' / 'packagefiles' / 'dll_to_lib.py
 {% endif %}
 
 {#- One cc.find_library() per library this platform's wrapper script
-declares, using the exact path Julia itself records for it. #}
+declares, using the exact path Julia itself records for it.
+
+Not every product resolves under its plain, unversioned name: a JLL tarball
+is not required to ship a dev symlink (macOS libgcc_s in
+CompilerSupportLibraries_jll has only the versioned libgcc_s.1.1.dylib,
+while sibling products in the same tarball do get one) or a MinGW import
+lib (libssp in the same JLL ships bin/libssp-0.dll with no lib/libssp-0.dll.a
+at all, unlike every other product there). find_library() defaults to
+required: true, so either case would otherwise abort the whole configure.
+
+required: false plus a declare_dependency(link_args: [...]) fallback,
+straight at the exact file Julia's own wrapper already names (lib.path),
+covers both: GNU ld and Apple ld both link fine against a shared library
+or DLL given by full path, no dev symlink or import lib needed. This is
+only a fallback, not the default, since find_library() finding a real
+import lib on Windows still matters for a product that exports data
+symbols (linking straight against a DLL there can silently resolve to a
+thunk address instead of the variable itself); it makes no difference for
+a function-only export like libssp. #}
+{% macro find_or_link_by_path(lib) %}
+{{ lib.variable }} = cc.find_library('{{ lib.link_name }}', dirs: meson.current_source_dir() / 'lib', required: false)
+if not {{ lib.variable }}.found()
+  if not fs.is_file('{{ lib.path }}')
+    error('{{ name }}: no linkable {{ lib.link_name }} in lib/, and {{ lib.path }} is missing from the extracted tarball')
+  endif
+  {{ lib.variable }} = declare_dependency(link_args: [meson.current_source_dir() / '{{ lib.path }}'])
+endif
+{% endmacro %}
 {% for lib in library_products %}
 {% if is_windows %}
 if is_msvc and python3.found() and fs.is_file('{{ lib.path }}') and not fs.is_file('lib/{{ lib.link_name }}.lib')
@@ -56,10 +83,10 @@ if is_msvc and python3.found() and fs.is_file('{{ lib.path }}') and not fs.is_fi
   )
   {{ lib.variable }} = declare_dependency(link_with: {{ lib.variable }}_import_lib)
 else
-  {{ lib.variable }} = cc.find_library('{{ lib.link_name }}', dirs: meson.current_source_dir() / 'lib')
+  {%- call find_or_link_by_path(lib) %}
 endif
 {% else %}
-{{ lib.variable }} = cc.find_library('{{ lib.link_name }}', dirs: meson.current_source_dir() / 'lib')
+{%- call find_or_link_by_path(lib) %}
 {% endif %}
 {% endfor %}
 

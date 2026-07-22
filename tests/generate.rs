@@ -87,10 +87,38 @@ fn generates_a_full_wrap_set_from_a_fixture_jll() {
             .join("packagefiles/ExampleThing-x86_64-linux-gnu/meson.build"),
     )
     .unwrap();
+    // find_library() is defensive: required: false plus a link_args fallback
+    // straight at the exact file the wrapper script names, since not every
+    // JLL product ships a plain, unversioned, linkable name in lib/ (see
+    // CompilerSupportLibraries_jll's libgcc_s on macOS and libssp on Windows).
     assert!(linux_overlay.contains(
-        "libexample = cc.find_library('example', dirs: meson.current_source_dir() / 'lib')"
+        "libexample = cc.find_library('example', dirs: meson.current_source_dir() / 'lib', required: false)"
+    ));
+    assert!(linux_overlay.contains("if not libexample.found()"));
+    assert!(linux_overlay.contains(
+        "libexample = declare_dependency(link_args: [meson.current_source_dir() / 'lib/libexample.so'])"
     ));
     assert!(linux_overlay.contains("examplething_dep = declare_dependency("));
+
+    // Regression test: a product whose tarball ships only a versioned
+    // soname, no unversioned dev symlink (macOS libgcc_s in
+    // CompilerSupportLibraries_jll is the real case this covers). The
+    // fallback must link straight against the exact versioned path the
+    // wrapper script names, not a reconstructed plain `lib<name>.dylib`
+    // find_library() would have looked for.
+    let darwin_overlay = fs::read_to_string(
+        output_dir
+            .path()
+            .join("packagefiles/ExampleThing-aarch64-darwin/meson.build"),
+    )
+    .unwrap();
+    assert!(darwin_overlay.contains(
+        "libversioned = cc.find_library('versioned', dirs: meson.current_source_dir() / 'lib', required: false)"
+    ));
+    assert!(darwin_overlay.contains("if not libversioned.found()"));
+    assert!(darwin_overlay.contains(
+        "libversioned = declare_dependency(link_args: [meson.current_source_dir() / 'lib/libversioned.1.1.dylib'])"
+    ));
     // The template's own explanatory comments (Jinja `{# #}` comments) are
     // for maintainers reading the .jinja source, not for the generated
     // output: this one, on why the whole runtime directory is installed,
