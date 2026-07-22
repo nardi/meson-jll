@@ -1,1 +1,6 @@
 /target
+
+# Downloaded wheels and CI artifact bundles used for local inspection, never
+# committed and never part of the published crate.
+*.whl
+*.zip

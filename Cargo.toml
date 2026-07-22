@@ -3,8 +3,15 @@ name = "meson-jll"
 version = "0.0.3"
 edition = "2021"
 description = "Generate Meson wraps from Julia JLL packages"
-license = "LICENSE.md"
+# The Hippocratic License is not an SPDX-listed license, so it is declared
+# through license-file rather than the SPDX-expecting `license` field, which
+# crates.io rejects for a non-standard identifier.
+license-file = "LICENSE.md"
 repository = "https://github.com/nardi/meson-jll"
+# test_projects/ holds hand-driven local scratch projects (each with its own
+# build trees and downloaded tarballs), never part of the library or binary,
+# so it is kept out of the published crate.
+exclude = ["/test_projects", "*.whl", "*.zip"]
 
 [[bin]]
 name = "meson-jll"
