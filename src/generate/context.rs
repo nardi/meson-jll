@@ -57,6 +57,10 @@ pub fn link_name_from_path(path: &str) -> String {
 pub struct SelectorWrapContext<'a> {
     /// The bare package name, also used as the public dependency name.
     pub name: &'a str,
+    /// The name of the variable in the selector overlay that holds the
+    /// dependency object, which `[provide]` maps the package name to. See
+    /// [`dependency_variable`].
+    pub dependency_variable: &'a str,
     /// The JLL release version this wrap was generated from. Recorded in a
     /// marker comment so that later `status` and `update` runs can see what
     /// is installed without re-fetching anything. See

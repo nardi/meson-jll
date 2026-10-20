@@ -132,7 +132,7 @@ pub fn write_wrap_set(package: &JllPackage, subprojects_dir: &Path, force: bool)
     let dependency_variable_name = dependency_variable(&package.name);
 
     write_empty_tar(subprojects_dir)?;
-    write_selector_wrap(package, subprojects_dir, force)?;
+    write_selector_wrap(package, &dependency_variable_name, subprojects_dir, force)?;
     write_selector_overlay(package, &dependency_variable_name, subprojects_dir, force)?;
     write_options(package, subprojects_dir, force)?;
 
@@ -197,9 +197,15 @@ fn write_dll_to_lib_script(subprojects_dir: &Path) -> Result<()> {
     fs::write(&path, DLL_TO_LIB_SCRIPT).map_err(|source| Error::WriteFile { path, source })
 }
 
-fn write_selector_wrap(package: &JllPackage, subprojects_dir: &Path, force: bool) -> Result<()> {
+fn write_selector_wrap(
+    package: &JllPackage,
+    dependency_variable_name: &str,
+    subprojects_dir: &Path,
+    force: bool,
+) -> Result<()> {
     let context = SelectorWrapContext {
         name: &package.name,
+        dependency_variable: dependency_variable_name,
         version: &package.version,
         empty_tar_filename: EMPTY_TAR_FILENAME,
     };

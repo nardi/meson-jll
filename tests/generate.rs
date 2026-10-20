@@ -33,7 +33,7 @@ fn generates_a_full_wrap_set_from_a_fixture_jll() {
     let selector_wrap = fs::read_to_string(output_dir.path().join("ExampleThing.wrap")).unwrap();
     assert!(selector_wrap.contains("# meson-jll: name=ExampleThing version=1.2.3+0"));
     assert!(selector_wrap.contains("directory = ExampleThing"));
-    assert!(selector_wrap.contains("dependency_names = ExampleThing"));
+    assert!(selector_wrap.contains("ExampleThing = examplething_dep"));
     // Meson does not discover packagefiles/<name>/ on its own: without this,
     // the overlay is silently never applied.
     assert!(selector_wrap.contains("patch_directory = ExampleThing"));
