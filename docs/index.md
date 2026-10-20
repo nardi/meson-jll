@@ -179,6 +179,24 @@ following line keeps the `packagefiles/` overlays `meson-jll` generated.
 The individual `.wrap` files are not directories, so they are committed
 either way.
 
+## Runtime requirements for consumers
+
+Two runtime details are left to the project that links the libraries.
+
+`libblastrampoline` has no BLAS backend of its own. Julia's `__init__`
+normally forwards OpenBLAS to it. Without that forwarding, the first BLAS
+call crashes with a segmentation fault, for example when `Ipopt_jll` is
+called from `SCIP_jll`. A consumer that loads the libraries from Python
+can call `lbt_forward` on `libopenblas.so` once at import, before anything
+else uses BLAS.
+
+Each JLL library has an `$ORIGIN` run path that covers only its own
+directory, so libraries from other JLLs are not found at run time. The
+loader reports this as `libgmpxx.so.4 => not found`. Linking the consumer
+with `-Wl,--no-as-needed` puts every dependency on the consumer's own
+run path, which makes them findable. The generated overlays do not add
+a run path for each dependency directory.
+
 ## Where to next
 
 - [Examples](crate::examples): a worked C program and a meson-python
