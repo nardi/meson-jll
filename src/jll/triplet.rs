@@ -255,12 +255,16 @@ impl Triplet {
     /// exactly to find that file: this tool does not otherwise know that
     /// file's name, only its own naming scheme from [`Self::identifier`].
     ///
-    /// The two agree on everything except the operating system word (see
+    /// The two differ in the operating system word (see
     /// `Os::julia_identifier`) and, when this JLL splits a platform by
-    /// Fortran runtime version, on how much of it is used: this tool's own
+    /// Fortran runtime version, in how much of it is used: this tool's own
     /// naming keeps the full `Artifacts.toml` value (for example `5.0.0`),
     /// but Julia's wrapper filenames (and, as it happens, its release
     /// tarball names) use only the major version (`libgfortran5`).
+    ///
+    /// The two ABI tags also come in the opposite order. This method puts
+    /// the libgfortran tag before the cxx tag, as BinaryBuilder does, while
+    /// `identifier()` puts the cxx tag first.
     pub fn julia_wrapper_identifier(&self) -> String {
         let mut identifier = format!("{}-{}", self.arch.identifier(), self.os.julia_identifier());
         if let Some(libc) = self.libc {
@@ -270,14 +274,14 @@ impl Triplet {
         if let Some(call_abi) = self.call_abi {
             identifier.push_str(call_abi.identifier());
         }
-        if let Some(abi) = &self.cxxstring_abi {
-            identifier.push_str("-cxx");
-            identifier.push_str(abi.trim_start_matches("cxx"));
-        }
         if let Some(version) = &self.libgfortran_version {
             let major_version = version.split('.').next().unwrap_or(version);
             identifier.push_str("-libgfortran");
             identifier.push_str(major_version);
+        }
+        if let Some(abi) = &self.cxxstring_abi {
+            identifier.push_str("-cxx");
+            identifier.push_str(abi.trim_start_matches("cxx"));
         }
         identifier
     }
@@ -415,5 +419,27 @@ mod tests {
             libgfortran_version: None,
         };
         assert_eq!(triplet.identifier(), triplet.julia_wrapper_identifier());
+    }
+
+    /// Both ABI tags are set, so this checks the order they appear in for
+    /// each naming scheme.
+    #[test]
+    fn julia_wrapper_identifier_puts_libgfortran_before_cxx() {
+        let triplet = Triplet {
+            arch: Arch::X86_64,
+            os: Os::Linux,
+            libc: Some(Libc::Glibc),
+            call_abi: None,
+            cxxstring_abi: Some("cxx11".to_string()),
+            libgfortran_version: Some("5.0.0".to_string()),
+        };
+        assert_eq!(
+            triplet.identifier(),
+            "x86_64-linux-gnu-cxx11-libgfortran5.0.0"
+        );
+        assert_eq!(
+            triplet.julia_wrapper_identifier(),
+            "x86_64-linux-gnu-libgfortran5-cxx11"
+        );
     }
 }
