@@ -84,6 +84,10 @@ fn generates_a_full_wrap_set_from_a_fixture_jll() {
     assert!(linux_overlay.contains(
         "libexample = cc.find_library('example', dirs: meson.current_source_dir() / 'lib')"
     ));
+    // A library nested below `lib/` is searched in its own directory first.
+    assert!(linux_overlay.contains(
+        "libnested = cc.find_library('nested', dirs: [meson.current_source_dir() / 'lib/nested/variant/lib', meson.current_source_dir() / 'lib'])"
+    ));
     assert!(linux_overlay.contains("examplething_dep = declare_dependency("));
 
     // This fixture never splits a platform by ABI, so no options file.

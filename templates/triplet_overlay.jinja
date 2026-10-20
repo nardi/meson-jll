@@ -38,7 +38,8 @@ dll_to_lib = meson.current_source_dir() / '..' / 'packagefiles' / 'dll_to_lib.py
 {% endif %}
 
 # One cc.find_library() per library this platform's wrapper script
-# declares, using the exact path Julia itself records for it.
+# declares, searching the directory of the path Julia itself records for it
+# (see context::library_search_directories).
 {% for lib in library_products %}
 {% if is_windows %}
 if is_msvc and python3.found() and fs.is_file('{{ lib.path }}') and not fs.is_file('lib/{{ lib.link_name }}.lib')
@@ -50,10 +51,10 @@ if is_msvc and python3.found() and fs.is_file('{{ lib.path }}') and not fs.is_fi
   )
   {{ lib.variable }} = declare_dependency(link_with: {{ lib.variable }}_import_lib)
 else
-  {{ lib.variable }} = cc.find_library('{{ lib.link_name }}', dirs: meson.current_source_dir() / 'lib')
+  {{ lib.variable }} = cc.find_library('{{ lib.link_name }}', dirs: {{ lib.search_directories }})
 endif
 {% else %}
-{{ lib.variable }} = cc.find_library('{{ lib.link_name }}', dirs: meson.current_source_dir() / 'lib')
+{{ lib.variable }} = cc.find_library('{{ lib.link_name }}', dirs: {{ lib.search_directories }})
 {% endif %}
 {% endfor %}
 

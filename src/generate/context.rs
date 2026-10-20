@@ -32,15 +32,8 @@ pub fn normalize_path(path: &str) -> String {
 /// example `example`) from a JLL library path such as `lib/libexample.so`
 /// or `bin\\libexample.dll`.
 ///
-/// The path's directory is deliberately not used for anything: it is where
-/// Julia's `@init_library_product` `dlopen`s the library from at runtime,
-/// which on Windows is the DLL itself under `bin/`, not the import library
-/// `find_library` actually needs to link against. Julia's own JLLWrappers
-/// build always places that import library under `lib/` instead (as
-/// `lib<name>.dll.a` on a MinGW target, matching `lib<name>.so` /
-/// `lib<name>.dylib` on the platforms where the runtime and link-time
-/// files are one and the same), so the overlay always searches `lib/`
-/// regardless of platform, and only the name is taken from this path.
+/// Only the file name is used. Where the library is searched for is decided
+/// separately by [`library_search_directories`].
 pub fn link_name_from_path(path: &str) -> String {
     let normalized = normalize_path(path);
     let file_name = normalized.rsplit('/').next().unwrap_or(&normalized);
@@ -49,6 +42,46 @@ pub fn link_name_from_path(path: &str) -> String {
         .strip_prefix("lib")
         .unwrap_or(before_first_dot)
         .to_string()
+}
+
+/// Returns the directories, relative to the extracted tarball, that
+/// `cc.find_library()` searches for one library.
+///
+/// Outside Windows the library Julia loads at runtime is also the one to
+/// link against, so its own directory comes first. Most JLLs keep it in
+/// `lib/`, but some nest it deeper (METIS uses
+/// `lib/metis/metis_Int32_Real64/lib/`). `lib/` stays in the list as a
+/// fallback.
+///
+/// On Windows the path recorded in the wrapper is the DLL under `bin/`,
+/// while the import library to link against (`lib<name>.dll.a` on a MinGW
+/// target) is always under `lib/`, so only `lib/` is searched.
+pub fn library_search_directories(path: &str, is_windows: bool) -> Vec<String> {
+    let default_directory = "lib".to_string();
+    if is_windows {
+        return vec![default_directory];
+    }
+    let normalized = normalize_path(path);
+    match normalized.rsplit_once('/') {
+        Some((parent, _)) if parent != default_directory => {
+            vec![parent.to_string(), default_directory]
+        }
+        _ => vec![default_directory],
+    }
+}
+
+/// Formats search directories as the Meson expression passed to the `dirs`
+/// keyword of `cc.find_library()`. A single directory stays a plain path
+/// and several become a list.
+pub fn search_directories_expression(directories: &[String]) -> String {
+    let paths: Vec<String> = directories
+        .iter()
+        .map(|directory| format!("meson.current_source_dir() / '{directory}'"))
+        .collect();
+    match paths.as_slice() {
+        [single] => single.clone(),
+        _ => format!("[{}]", paths.join(", ")),
+    }
 }
 
 /// Renders the overlay-only selector wrap, for example `ExampleThing.wrap`.
@@ -131,6 +164,9 @@ pub struct SelectorOverlayContext<'a> {
 pub struct LibraryProductView {
     pub variable: String,
     pub link_name: String,
+    /// The Meson expression for the `dirs` keyword of this library's
+    /// `cc.find_library()` call. See [`library_search_directories`].
+    pub search_directories: String,
     /// The path Julia's own wrapper script declared for this library,
     /// relative to the extracted tarball, normalised to forward slashes
     /// (see [`link_name_from_path`]). Kept as-is, versioned soname and
@@ -216,6 +252,49 @@ mod tests {
     #[test]
     fn link_name_handles_a_versioned_soname() {
         assert_eq!(link_name_from_path("lib/libexample.so.3"), "example");
+    }
+
+    #[test]
+    fn search_directories_for_a_library_in_lib() {
+        assert_eq!(
+            library_search_directories("lib/libexample.so", false),
+            vec!["lib"]
+        );
+    }
+
+    #[test]
+    fn search_directories_for_a_nested_library_fall_back_to_lib() {
+        assert_eq!(
+            library_search_directories(
+                "lib/metis/metis_Int32_Real64/lib/libmetis_Int32_Real64.so",
+                false
+            ),
+            vec!["lib/metis/metis_Int32_Real64/lib", "lib"]
+        );
+    }
+
+    #[test]
+    fn search_directories_on_windows_ignore_the_dll_directory() {
+        assert_eq!(
+            library_search_directories("bin\\\\libexample.dll", true),
+            vec!["lib"]
+        );
+    }
+
+    #[test]
+    fn search_directories_expression_is_a_plain_path_for_one_directory() {
+        assert_eq!(
+            search_directories_expression(&["lib".to_string()]),
+            "meson.current_source_dir() / 'lib'"
+        );
+    }
+
+    #[test]
+    fn search_directories_expression_is_a_list_for_several_directories() {
+        assert_eq!(
+            search_directories_expression(&["lib/a".to_string(), "lib".to_string()]),
+            "[meson.current_source_dir() / 'lib/a', meson.current_source_dir() / 'lib']"
+        );
     }
 
     /// Regression test: the selector overlay used to guard both

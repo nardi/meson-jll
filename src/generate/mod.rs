@@ -18,9 +18,9 @@ use crate::error::{Error, Result};
 use crate::jll::triplet::Os;
 use crate::jll::{JllPackage, ResolvedPlatform};
 use context::{
-    dependency_variable, link_name_from_path, normalize_path, BinaryWrapContext,
-    LibraryProductView, OptionsContext, PlatformSelector, SelectorOverlayContext,
-    SelectorWrapContext, TripletOverlayContext,
+    dependency_variable, library_search_directories, link_name_from_path, normalize_path,
+    search_directories_expression, BinaryWrapContext, LibraryProductView, OptionsContext,
+    PlatformSelector, SelectorOverlayContext, SelectorWrapContext, TripletOverlayContext,
 };
 
 /// The name of the placeholder archive every selector wrap's
@@ -250,17 +250,22 @@ fn write_triplet_overlay(
     let identifier = resolved.platform.triplet.identifier();
     let project_name = format!("{}-{identifier}", package.name);
 
+    let is_windows = resolved.platform.triplet.os == Os::Windows;
+
     let library_products = resolved
         .library_products
         .iter()
         .map(|product| LibraryProductView {
             variable: product.variable.clone(),
             link_name: link_name_from_path(&product.path),
+            search_directories: search_directories_expression(&library_search_directories(
+                &product.path,
+                is_windows,
+            )),
             path: normalize_path(&product.path),
         })
         .collect();
 
-    let is_windows = resolved.platform.triplet.os == Os::Windows;
     let overlay_dir = subprojects_dir.join("packagefiles").join(&project_name);
 
     let mut jll_dependencies: Vec<&str> = package.dependencies.iter().map(String::as_str).collect();
