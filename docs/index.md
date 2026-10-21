@@ -152,16 +152,20 @@ subprojects/*
 ```
 
 The extra command can be folded into `meson setup` itself, so a collaborator
-never has to remember it: call `meson-jll sync` from a `run_command()` at the
-top of the root `meson.build`, before anything reads from `subprojects/`.
+never has to remember it. Look up `meson-jll` with `find_program()` and call
+`sync` from a `run_command()` at the top of the root `meson.build`, before
+anything reads from `subprojects/`.
 
 ```meson
-run_command('meson-jll', 'sync', check: true)
+meson_jll = find_program('meson-jll')
+run_command(meson_jll, 'sync', check: true)
 ```
 
 This makes `meson setup` self-sufficient straight after a fresh checkout, at
-the cost of requiring `meson-jll` itself to be on `PATH` wherever the project
-is configured, including CI.
+the cost of requiring `meson-jll` itself to be on `PATH` wherever the
+project is configured, including CI. `find_program()` checks for that first,
+so a machine without `meson-jll` fails at this line with a message naming
+the missing program, instead of with an error from the `sync` call.
 
 **Approach two: commit the generated wraps too.** Commit the `.wrap` files
 and the `packagefiles/` overlay directory `meson-jll` generates, so the
