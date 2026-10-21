@@ -122,27 +122,19 @@ pub enum Error {
     #[error("{text} is not a valid version")]
     ParseVersion { text: String },
 
-    /// The lockfile could not be parsed as TOML.
-    #[error("could not parse the lockfile at {path}: {source}")]
+    /// The lockfile could not be parsed. The reason says what is wrong with
+    /// the line it points at.
+    #[error("Could not parse the lockfile at {path}, line {line}. {reason}")]
     ParseLockFile {
         path: PathBuf,
-        #[source]
-        source: Box<toml::de::Error>,
+        line: usize,
+        reason: String,
     },
 
-    /// The lockfile model could not be serialized back to TOML. This should
-    /// never actually happen for the plain data the lockfile holds, but the
-    /// underlying library call is fallible.
-    #[error("could not serialize the lockfile: {source}")]
-    SerializeLockFile {
-        #[source]
-        source: Box<toml::ser::Error>,
-    },
-
-    /// The lockfile's `version` field is not one this build of `meson-jll`
+    /// The lockfile's `format` is not one this build of `meson-jll`
     /// understands. See `crate::lockfile` for what the field means.
     #[error(
-        "the lockfile at {path} is format version {found}, but this build of meson-jll only understands version {supported}. Upgrade meson-jll to read it."
+        "The lockfile at {path} is format version {found}, but this build of meson-jll only understands version {supported}. Upgrade meson-jll to read it."
     )]
     UnsupportedLockFileVersion {
         path: PathBuf,

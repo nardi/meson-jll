@@ -45,9 +45,6 @@ mod tests {
     #[test]
     fn reads_packages_from_the_lockfile_sorted_by_name() {
         let directory = tempfile::tempdir().unwrap();
-        // The lockfile lives in the project root, the parent of the
-        // subprojects directory, so the test writes it there and points
-        // `installed_packages` at a `subprojects` child of the same root.
         let subprojects_dir = directory.path().join("subprojects");
         let lock_path = lock_path_for(&subprojects_dir);
 

@@ -19,28 +19,16 @@ use crate::registry;
 use crate::resolve::{self, GithubCatalog, ResolvedPackage, DEFAULT_MAX_ITERATIONS};
 use crate::source::{CustomSource, GithubSource};
 
-/// The lockfile's file name. It lives in the project root (the parent of
-/// the subprojects directory), next to `meson.build`, not inside
-/// `subprojects/` itself: it describes the project's whole JLL dependency
-/// set, which is project-level information a user commits and edits
-/// alongside their build definition, rather than one of the generated wrap
-/// files under `subprojects/`. See `crate::lockfile` for the format.
-pub const LOCK_FILE_NAME: &str = "meson-jll.lock";
+/// The lockfile's file name. It is a wrap file inside the subprojects
+/// directory, because Meson reads that file before `meson-jll` has run and
+/// ignores the lock sections inside it. See `crate::lockfile` for the format.
+pub const LOCK_FILE_NAME: &str = "meson-jll.lock.wrap";
 
 /// The lockfile's path, given a project's subprojects directory. This is
-/// the one place the "lockfile lives in the project root" rule is encoded,
-/// so every command reads and writes the same location. A `subprojects_dir`
-/// with no parent component (a bare relative `subprojects`) resolves to the
-/// current directory, so the lockfile lands next to it either way.
+/// the one place the "lockfile lives in the subprojects directory" rule is
+/// encoded, so every command reads and writes the same location.
 pub fn lock_path_for(subprojects_dir: &Path) -> std::path::PathBuf {
-    // A bare relative `subprojects` has a parent of `""` (the empty path),
-    // not `None`, and joining onto `""` would drop the leading directory,
-    // so an empty parent is treated as the current directory `.`.
-    let project_root = match subprojects_dir.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent,
-        _ => Path::new("."),
-    };
-    project_root.join(LOCK_FILE_NAME)
+    subprojects_dir.join(LOCK_FILE_NAME)
 }
 
 /// A JLL's Windows binaries are MinGW-w64 built, and depend at runtime on

@@ -177,5 +177,5 @@ project's existing lockfile before ever calling the solver:
 `update <name>` is exactly `install <name>` with no version pinned, since
 installing with no version already means "take the latest available". A
 bare `update`, with no name, refreshes every root at once with no pins at
-all. See [`crate::lockfile`] for the `[[package]]` `dependencies` edges this
-closure is computed from.
+all. See [`crate::lockfile`] for the `dependencies` edges this closure is
+computed from.
