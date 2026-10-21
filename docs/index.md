@@ -179,23 +179,34 @@ following line keeps the `packagefiles/` overlays `meson-jll` generated.
 The individual `.wrap` files are not directories, so they are committed
 either way.
 
-## Runtime requirements for consumers
+## Common issues
 
-Two runtime details are left to the project that links the libraries.
+Some JLLs need help from the project that links them, and the generated
+wraps do not provide it. The two problems below come up most often.
 
-`libblastrampoline` has no BLAS backend of its own. Julia's `__init__`
-normally forwards OpenBLAS to it. Without that forwarding, the first BLAS
-call crashes with a segmentation fault, for example when `Ipopt_jll` is
-called from `SCIP_jll`. A consumer that loads the libraries from Python
-can call `lbt_forward` on `libopenblas.so` once at import, before anything
-else uses BLAS.
+### BLAS libraries
+
+`libblastrampoline` has no BLAS backend of its own. In Julia, the `__init__`
+function of the package forwards OpenBLAS to it when the package loads. A
+project that links the library outside of Julia has no such step, so the
+first BLAS call crashes with a segmentation fault. This happens, for
+example, when `Ipopt_jll` is called from `SCIP_jll`.
+
+To avoid the crash, forward OpenBLAS once before anything else uses BLAS. A
+consumer that loads the libraries from Python can call `lbt_forward` on
+`libopenblas.so` once at import.
+
+### Transitive dependencies
 
 Each JLL library has an `$ORIGIN` run path that covers only its own
-directory, so libraries from other JLLs are not found at run time. The
-loader reports this as `libgmpxx.so.4 => not found`. Linking the consumer
-with `-Wl,--no-as-needed` puts every dependency on the consumer's own
-run path, which makes them findable. The generated overlays do not add
-a run path for each dependency directory.
+directory. Libraries from other JLLs live in other directories, so the
+loader cannot find them at run time and reports an error such as
+`libgmpxx.so.4 => not found`. The generated overlays do not add a run path
+for each dependency directory.
+
+To make the dependencies findable, link the consumer with
+`-Wl,--no-as-needed`. This puts every dependency on the consumer's own run
+path.
 
 ## Where to next
 
