@@ -100,7 +100,7 @@ fn generates_a_full_wrap_set_from_a_fixture_jll() {
     ));
     // A library nested below `lib/` is searched in its own directory first.
     assert!(linux_overlay.contains(
-        "libnested = cc.find_library('nested', dirs: [meson.current_source_dir() / 'lib/nested/variant/lib', meson.current_source_dir() / 'lib'])"
+        "libnested = cc.find_library('nested', dirs: [meson.current_source_dir() / 'lib/nested/variant/lib', meson.current_source_dir() / 'lib'], required: false)"
     ));
     assert!(linux_overlay.contains("examplething_dep = declare_dependency("));
 
