@@ -1,0 +1,20 @@
+# Meson rejects a wrap file that does not start with a wrap section.
+# The sections named meson-jll below hold the lock.
+[wrap-file]
+directory = meson-jll
+
+[meson-jll]
+format = 1
+
+[meson-jll.roots]
+SuiteSparse = 7.0.1+0
+
+[meson-jll.package.CompilerSupportLibraries]
+version = 1.5.5+2
+
+[meson-jll.package.SuiteSparse]
+version = 7.0.1+0
+dependencies = libblastrampoline
+
+[meson-jll.package.libblastrampoline]
+version = 5.15.0+0
