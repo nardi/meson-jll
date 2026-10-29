@@ -14,6 +14,7 @@ pub mod registry;
 pub mod resolve;
 pub mod source;
 pub mod status;
+pub mod tool_wrap;
 pub mod version;
 
 pub use error::{Error, Result};

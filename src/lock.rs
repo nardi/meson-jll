@@ -357,6 +357,59 @@ impl LockFile {
         self.write_starting_with(path, None)
     }
 
+    /// The part of the file at `path` that is not the lock, which is the wrap
+    /// sections, with trailing blank lines removed. This returns `None` for a
+    /// file that does not exist or has nothing outside the lock.
+    pub fn wrap_text(path: &Path) -> Result<Option<String>> {
+        let existing = read_if_present(path)?.unwrap_or_default();
+        let mut text = String::new();
+        for section in split_sections(&existing) {
+            if section.name.is_some_and(is_lock_section) {
+                continue;
+            }
+            for line in &section.lines {
+                text.push_str(line);
+                text.push('\n');
+            }
+        }
+        let text = text.trim_end();
+        Ok((!text.is_empty()).then(|| format!("{text}\n")))
+    }
+
+    /// Replaces everything in the file at `path` that is not the lock with
+    /// `wrap`, and keeps the lock sections as they are. A file that does not
+    /// exist is created holding only `wrap`.
+    pub fn replace_wrap(path: &Path, wrap: &str) -> Result<()> {
+        let existing = read_if_present(path)?.unwrap_or_default();
+        let mut lock_text = String::new();
+        for section in split_sections(&existing) {
+            if section.name.is_some_and(is_lock_section) {
+                for line in &section.lines {
+                    lock_text.push_str(line);
+                    lock_text.push('\n');
+                }
+            }
+        }
+        let mut text = wrap.trim_end().to_string();
+        text.push('\n');
+        let lock_text = lock_text.trim_end();
+        if !lock_text.is_empty() {
+            text.push('\n');
+            text.push_str(lock_text);
+            text.push('\n');
+        }
+        if let Some(directory) = path.parent() {
+            fs::create_dir_all(directory).map_err(|source| Error::CreateDirectory {
+                path: directory.to_path_buf(),
+                source,
+            })?;
+        }
+        fs::write(path, text).map_err(|source| Error::WriteFile {
+            path: path.to_path_buf(),
+            source,
+        })
+    }
+
     /// Whether the file at `path` already has a section of the wrap, which
     /// is any section that is not part of the lock.
     pub fn has_wrap_section(path: &Path) -> Result<bool> {

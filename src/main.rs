@@ -14,7 +14,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use meson_jll::progress::Progress;
 use meson_jll::version::Version;
-use meson_jll::{install, registry, status};
+use meson_jll::{install, registry, status, tool_wrap};
 
 #[derive(Parser)]
 #[command(
@@ -79,6 +79,16 @@ enum Command {
         subprojects_dir: PathBuf,
     },
 
+    /// Move this project to another release of meson-jll, so that Meson
+    /// fetches that release when meson-jll is not installed. The lock is kept.
+    SelfUpdate {
+        /// The release to pin, for example 0.2.0. Defaults to the latest.
+        version: Option<String>,
+        /// The subprojects directory to update.
+        #[arg(long, default_value = "subprojects")]
+        subprojects_dir: PathBuf,
+    },
+
     /// Regenerate an installed JLL's wrap set to its latest version. Every
     /// installed JLL is updated when no name is given.
     Update {
@@ -114,6 +124,10 @@ fn main() -> anyhow::Result<()> {
         Command::Sync { subprojects_dir } => run_sync(&subprojects_dir),
         Command::Info { name } => run_info(&name),
         Command::Status { subprojects_dir } => run_status(&subprojects_dir),
+        Command::SelfUpdate {
+            version,
+            subprojects_dir,
+        } => run_self_update(version.as_deref(), &subprojects_dir),
         Command::Update {
             name,
             subprojects_dir,
@@ -327,6 +341,34 @@ fn run_update(name: Option<&str>, subprojects_dir: &Path) -> anyhow::Result<()> 
     reporter.finish("Updated", installed.len());
     for (name, version) in installed {
         print_package_line(&name, &version);
+    }
+    Ok(())
+}
+
+fn run_self_update(version: Option<&str>, subprojects_dir: &Path) -> anyhow::Result<()> {
+    let update = tool_wrap::self_update(subprojects_dir, version)?;
+    let path = install::lock_path_for(subprojects_dir);
+    let version = &update.version;
+    match update.previous_version.as_deref() {
+        _ if update.is_unchanged() => println!(
+            "{} {} is already pinned in {}",
+            style("meson-jll").bold(),
+            style(version).dim(),
+            path.display()
+        ),
+        Some(previous) => println!(
+            "{} meson-jll from {} to {} in {}",
+            style("Updated").green().bold(),
+            style(previous).dim(),
+            style(version).dim(),
+            path.display()
+        ),
+        None => println!(
+            "{} meson-jll {} in {}",
+            style("Pinned").green().bold(),
+            style(version).dim(),
+            path.display()
+        ),
     }
     Ok(())
 }

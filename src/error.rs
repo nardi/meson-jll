@@ -142,6 +142,11 @@ pub enum Error {
         supported: u32,
     },
 
+    /// The place the wrap sections for `meson-jll` itself were read from does
+    /// not hold wrap sections that provide `meson-jll`.
+    #[error("The file at {location} is not a wrap that provides meson-jll.")]
+    InvalidToolWrap { location: String },
+
     /// A name passed to the resolver has no published versions at all, so
     /// it cannot be a real JLL package.
     #[error("{name} is not a known JLL package")]

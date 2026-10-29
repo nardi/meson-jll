@@ -61,41 +61,6 @@ pub fn read_lock(subprojects_dir: &Path) -> Result<LockFile> {
     LockFile::read_legacy(&legacy_lock_path_for(subprojects_dir))
 }
 
-/// The environment variable that names where the wrap sections for
-/// `meson-jll` itself are read from, a URL or a path. The default is the
-/// `meson-jll.lock.wrap` file attached to the GitHub release of this exact
-/// version, which holds the hashes of that release's binaries.
-pub const WRAP_SOURCE_VARIABLE: &str = "MESON_JLL_WRAP";
-
-/// Reads the wrap sections that let Meson fetch `meson-jll` itself, from the
-/// place [`WRAP_SOURCE_VARIABLE`] names or else the release of this version.
-///
-/// This returns `None` when they cannot be read, for example for a build that
-/// is not a release, or without a network. A project is not worse off for
-/// that than before: it only has no fallback for a machine without
-/// `meson-jll`, and can get one later by copying the file from a release.
-fn release_wrap() -> Option<String> {
-    let source = std::env::var(WRAP_SOURCE_VARIABLE).unwrap_or_else(|_| {
-        format!(
-            "{}/releases/download/v{}/meson-jll.lock.wrap",
-            env!("CARGO_PKG_REPOSITORY"),
-            env!("CARGO_PKG_VERSION")
-        )
-    });
-    let text = if source.starts_with("https://") || source.starts_with("http://") {
-        crate::source::fetch_url(&source).ok()?
-    } else {
-        std::fs::read_to_string(&source).ok()?
-    };
-    // Anything else is not a wrap that provides the program, and a file with
-    // lock sections of its own would write the lock twice.
-    let provides_program = text.contains("[wrap-file]") && text.contains("program_names");
-    let has_lock_sections = text
-        .lines()
-        .any(|line| line.trim().starts_with("[meson-jll"));
-    (provides_program && !has_lock_sections).then_some(text)
-}
-
 /// Writes the lock into the wrap file of `subprojects_dir`, and removes the
 /// lockfile of earlier versions if the project still has one, since the wrap
 /// file holds the same information from now on.
@@ -470,7 +435,7 @@ fn write_wraps_and_lock(
             roots,
             packages: locked_packages,
         },
-        release_wrap,
+        crate::tool_wrap::running_release_wrap,
     )?;
 
     Ok(installed)
