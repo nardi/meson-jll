@@ -25,6 +25,117 @@ references it, only the platform matching the machine running `meson setup`
 is ever downloaded. The rest of the wrap set sits untouched in
 `subprojects/`, portable across every machine it was generated for.
 
+## The public dependency name
+
+The name a selector wrap provides is the package name with a `_jll` suffix,
+for example `dependency('Zlib_jll')`, not a bare `dependency('Zlib')`. This
+matters because a JLL bundles its own copy of a library that a build machine
+very often already has a system copy of. A bare `dependency('Zlib')` would be
+satisfied by that system copy before the wrap ever ran, and the JLL's own
+binary, the one meant to end up in the wheel, would silently never build. No
+system package advertises itself under a `_jll` name, so the suffixed name can
+only ever resolve to the wrap. The same suffixed name is used both for the
+public dependency a consumer asks for and for the edges between JLLs
+internally. Each `declare_dependency()` also carries the JLL's release version
+as its `version:`, so a consumer can pin it, for example
+`dependency('HiGHS_jll', version: '>=1.15.0')`.
+
+## Installing the runtime libraries
+
+A binary wrap's overlay installs the platform's runtime libraries into
+`libdir`, which is where meson-python folds a wheel's bundled shared
+libraries from. A tarball ships more than a consumer loads, and a consumer
+loads more than the wrapper declares, so the overlay works out what to
+install from the extracted files. `prune_unused_libs.py` (shared the same
+way `dll_to_lib.py` is) does this at configure time, the first moment the
+files exist. It works like this:
+
+- It starts from the declared library products, named by their path in the
+  tarball. A product can sit below a subdirectory of the runtime directory,
+  as the three extra METIS libraries do under `lib/metis/`.
+- It follows what each file needs, which is the `NEEDED` entries on Linux,
+  the install names on macOS and the imports on Windows, read with
+  `readelf`, `otool`, `dumpbin` or `objdump`. A needed library is looked for
+  next to the file that needs it first, and then in the runtime directory.
+  Libraries found this way are installed although no wrapper declares them,
+  such as `libpord` behind `libdmumps` and `libquadmath` behind
+  `libgfortran`. Libraries the system provides are not in the tarball and
+  are skipped.
+- It follows GNU ld scripts to the library behind them. `libgcc_s.so` in
+  CompilerSupportLibraries is a short text script that points at
+  `libgcc_s.so.1`, and only the real library is installed.
+- It installs every file under the name the loader asks for, which is the
+  soname. A wrapper names a product by its unversioned development link
+  (`libhighs.so`), while the extension records `libhighs.so.1`. Each file
+  lands directly in `libdir`, whatever directory it came from.
+
+Everything else stays out of the install: the sanitizer runtimes of
+CompilerSupportLibraries, static archives, the development links and a JLL's
+own executables. For CompilerSupportLibraries on Linux this is the
+difference between 209 MB and 36 MB.
+
+If the script cannot inspect anything, because there is no `python3` or no
+inspection tool, the overlay installs the whole runtime directory instead,
+without the build-time `cmake/`, `pkgconfig/` and `gcc/` trees. The same
+happens when two different files would get the same install name. Shipping
+too much is wasteful, while shipping too little breaks the import, so this
+is the safe direction to fail in.
+
+## Stripping the runtime libraries
+
+JLL binaries ship unstripped, with a full symbol table. A bundled
+`libstdc++` commonly carries ten times its stripped size in debug and symbol
+information. Meson's own `-Dstrip` does not help here on its own: it only
+strips targets Meson itself compiled, never a file `install_subdir` copied in
+verbatim the way every library above is installed.
+
+The natural fix, an `add_install_script()` that strips whatever was just
+installed, does not work for a Python wheel: meson-python never actually
+runs `meson install`. It builds a wheel by reading Meson's own static
+install plan (`meson introspect --install-plan`, computed entirely at
+configure time) and copying those files straight out of the build tree.
+An install script produces no such advance listing, since Meson cannot know
+ahead of time what an arbitrary script will do, so it is invisible to that
+plan and silently never runs for a wheel build, `-Dstrip=true` or not.
+
+Instead, each declared library product gets its own `custom_target()`,
+built at compile time (which meson-python does run) rather than install
+time, gated on `-Dstrip` and a strip tool being found. GNU `strip` is
+preferred and `llvm-strip` is the fallback, because `llvm-strip` 18 writes
+a `libstdc++.so.6` whose last loadable segment has a file offset that no
+longer matches its address modulo the page size, and the loader rejects it
+with "ELF load command address/offset not page-aligned". It strips a copy of the product under its own final name, and the
+bulk directory install above excludes that one file, so the stripped
+`custom_target` output is what actually ships. This is silently skipped,
+the same as the MSVC import-lib workaround above, when no strip tool is
+found, so it is always safe to leave enabled. The libraries found by
+`prune_unused_libs.py` are stripped as well, including the ones no wrapper
+declares. Only the fallback of installing the whole runtime directory is
+limited to the declared products.
+
+The actual stripping goes through `strip_or_copy.py` (shared the same way
+`dll_to_lib.py` is), not a direct call to the strip tool, because a strip
+tool is not always able to parse every binary it is pointed at.
+`llvm-strip` in particular has been observed to reject some MinGW-built
+COFF binaries outright ("invalid SymbolTableIndex") that it can still link
+against fine. Since `-Dstrip` is a size optimization, never a correctness
+requirement, `strip_or_copy.py` falls back to a plain copy on failure
+rather than taking the whole build down over a library that was always
+going to ship unstripped anyway.
+
+On Windows, the same runtime install also always excludes a JLL's own
+executable products (`highs.exe` alongside `libhighs.dll`, for example,
+parsed the same way library products are, from `@declare_executable_product`
+in the wrapper script): a library consumer never needs the JLL's own CLI
+tool, and bundling it anyway only bloats a wheel for no reason.
+
+One rough edge remains on macOS, in meson-python rather than here. When an
+extension links libraries from several JLL subprojects, each contributes its
+own `@loader_path`-relative `LC_RPATH`, and meson-python rewrites all of them to
+the same bundled-libraries path, producing duplicate load commands that recent
+dyld rejects. Until meson-python de-duplicates after rewriting, a consumer that
+hits this can strip the duplicates as a post-repair step.
+
 ## The generation process
 
 Generating a wrap set happens in three steps, each backed by its own part

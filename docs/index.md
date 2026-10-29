@@ -53,7 +53,7 @@ $ meson-jll install SuiteSparse
 ```
 ```python
 # meson.build
-suitesparse = dependency('SuiteSparse')
+suitesparse = dependency('SuiteSparse_jll')
 executable('demo', 'demo.c', dependencies: suitesparse)
 ```
 

@@ -35,9 +35,8 @@ pub fn normalize_path(path: &str) -> String {
 /// Only the file name is used. Where the library is searched for is decided
 /// separately by [`library_search_directories`].
 pub fn link_name_from_path(path: &str) -> String {
-    let normalized = normalize_path(path);
-    let file_name = normalized.rsplit('/').next().unwrap_or(&normalized);
-    let before_first_dot = file_name.split('.').next().unwrap_or(file_name);
+    let file_name = basename_from_path(path);
+    let before_first_dot = file_name.split('.').next().unwrap_or(&file_name);
     before_first_dot
         .strip_prefix("lib")
         .unwrap_or(before_first_dot)
@@ -82,6 +81,19 @@ pub fn search_directories_expression(directories: &[String]) -> String {
         [single] => single.clone(),
         _ => format!("[{}]", paths.join(", ")),
     }
+}
+
+/// The file name a JLL library path ends in, for example `libexample.so`
+/// from `lib/libexample.so`. Used to exclude a library product's own file
+/// from a bulk directory install (see `TripletOverlayContext::strip`),
+/// since it is installed separately, as a stripped copy, instead.
+pub fn basename_from_path(path: &str) -> String {
+    let normalized = normalize_path(path);
+    normalized
+        .rsplit('/')
+        .next()
+        .unwrap_or(&normalized)
+        .to_string()
 }
 
 /// Renders the overlay-only selector wrap, for example `ExampleThing.wrap`.
@@ -174,6 +186,9 @@ pub struct LibraryProductView {
     /// `install_data()` installs is always the exact one that actually
     /// exists on disk.
     pub path: String,
+    /// `path`'s own file name, for example `libexample.so.3` from
+    /// `lib/libexample.so.3`. See [`basename_from_path`].
+    pub basename: String,
 }
 
 /// Renders a per-triplet overlay's `meson.build`, which turns the extracted
@@ -184,6 +199,12 @@ pub struct TripletOverlayContext<'a> {
     /// The per-triplet subproject name, for example
     /// `ExampleThing-x86_64-linux-gnu`.
     pub name: &'a str,
+    /// The JLL's own release version, for example `1.2.3+0`, emitted as the
+    /// `version:` of the generated `declare_dependency` so a consumer can
+    /// pin it. The full version is kept, build metadata (`+0`) and all,
+    /// since that suffix is the meaningful JLL rebuild counter and Meson's
+    /// version comparison tolerates it.
+    pub version: &'a str,
     pub dependency_variable: String,
     pub library_products: Vec<LibraryProductView>,
     /// The bare names of the other JLL packages this platform links against.
@@ -209,6 +230,12 @@ pub struct TripletOverlayContext<'a> {
     /// architecture (see [`crate::jll::triplet::Arch::msvc_machine`]).
     /// Only meaningful when `is_windows` is set.
     pub msvc_machine: &'a str,
+    /// The file names of this platform's own executable products, for
+    /// example `highs.exe`. Only meaningful, and only used by the template,
+    /// when `is_windows` is set: the runtime install excludes these from
+    /// the whole-`bin/`-directory copy, since a library consumer has no use
+    /// for the JLL's own CLI tool.
+    pub windows_executable_basenames: Vec<String>,
 }
 
 #[cfg(test)]

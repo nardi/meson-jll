@@ -133,7 +133,7 @@ fn write_lock(
 /// JLL's `Project.toml` `[deps]` (confirmed against SuiteSparse_jll's,
 /// which lists none), since it is a property of the toolchain every
 /// Windows JLL happens to be built with, not of the package itself. Every
-/// resolve includes it unconditionally so `dependency('CompilerSupportLibraries')`
+/// resolve includes it unconditionally so `dependency('CompilerSupportLibraries_jll')`
 /// always has a wrap to find, regardless of whether the specific JLLs
 /// being installed turn out to need it, the same way every platform's
 /// wraps are always generated even though only one is ever downloaded.
