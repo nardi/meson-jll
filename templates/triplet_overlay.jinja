@@ -280,12 +280,39 @@ come along unstripped. The pruned path above has no such limit. #}
 {% endfor %}
 endif
 
+{% if is_elf %}
+{#- JLL libraries carry a run path of only $ORIGIN, so a library of one JLL
+cannot find one of another JLL (libipopt needs libspral, which sits in the
+SPRAL directory). The dynamic loader still satisfies the request when the
+library is already loaded, because a loaded library matches by soname. That
+happens when the consumer records the library as NEEDED itself, which the
+linker's default of --as-needed leaves out for any library the consumer
+does not call. --no-as-needed makes it record all of them, so a consumer
+needs no linker flag of its own. Julia reaches the same state by loading
+every dependency JLL before the one that needs it.
+
+The flag is its own dependency and comes first in the list below, so it
+precedes every library of this package on the link line, and the first
+package of a build puts it ahead of all the others. Every package repeats
+it, which the linker accepts. --no-as-needed stays in effect for whatever
+the consumer links after the JLL libraries too, which can add a NEEDED entry
+for a system library it does not call. That costs nothing at load time. A
+balanced --push-state and --pop-state around each library would avoid
+that, but Meson only gives a dependency's directories to the run path of
+its consumer when the library comes from find_library(), and the pair
+cannot wrap a library that does. #}
+record_all_libraries = declare_dependency(link_args: ['-Wl,--no-as-needed'])
+
+{% endif %}
 {{ dependency_variable }} = declare_dependency(
   {#- The JLL's own release version, so a consumer can pin it, for example
   dependency('HiGHS_jll', version: '>=1.15.0'). #}
   version: '{{ version }}',
   include_directories: include_dirs,
   dependencies: [
+{% if is_elf %}
+    record_all_libraries,
+{% endif %}
 {% for lib in library_products %}
     {{ lib.variable }},
 {% endfor %}

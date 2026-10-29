@@ -81,6 +81,30 @@ happens when two different files would get the same install name. Shipping
 too much is wasteful, while shipping too little breaks the import, so this
 is the safe direction to fail in.
 
+## Finding the libraries of other JLLs
+
+Each JLL library has an `$ORIGIN` run path that covers only its own
+directory, so `libipopt.so.3` cannot find `libspral.so` in the directory of
+the SPRAL JLL. The loader reports `libspral.so: cannot open shared object
+file`. Julia avoids this by loading every dependency JLL before the one that
+needs it, and a library that is already loaded satisfies a later request for
+the same soname, wherever it was loaded from.
+
+A consumer gets the same effect by recording each library as `NEEDED`
+itself, so the loader opens it first. The linker's default of `--as-needed`
+leaves out any library the consumer does not call, so on Linux and FreeBSD
+each overlay adds `-Wl,--no-as-needed` to its dependency, ahead of its
+libraries. A consumer needs no linker flag of its own. The flag stays in
+effect for whatever the consumer links after the JLL libraries, which can
+add a `NEEDED` entry for a system library it does not call and costs nothing
+at load time. macOS and Windows get no flag, and `ld64` already records
+every dylib it links.
+
+An installed wheel does not depend on this. The install step puts every
+library into one directory, so the `$ORIGIN` run path of each library finds
+the others. It matters when a consumer runs from the build tree, as an
+editable install does.
+
 ## Stripping the runtime libraries
 
 JLL binaries ship unstripped, with a full symbol table. A bundled

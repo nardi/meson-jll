@@ -103,6 +103,11 @@ fn generates_a_full_wrap_set_from_a_fixture_jll() {
         "libnested = cc.find_library('nested', dirs: [meson.current_source_dir() / 'lib/nested/variant/lib', meson.current_source_dir() / 'lib'], required: false)"
     ));
     assert!(linux_overlay.contains("examplething_dep = declare_dependency("));
+    // JLL libraries only search their own directory, so a consumer must
+    // record each of them as needed itself. The dependency carries the
+    // flag, ahead of the libraries, on ELF platforms only.
+    assert!(linux_overlay
+        .contains("record_all_libraries = declare_dependency(link_args: ['-Wl,--no-as-needed'])"));
 
     // Regression test: a product whose tarball ships only a versioned
     // soname, no unversioned dev symlink (macOS libgcc_s in

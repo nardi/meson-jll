@@ -652,6 +652,7 @@ fn write_triplet_overlay(
         jll_dependencies,
         namespaced_include_dir: package.name.to_lowercase(),
         is_windows,
+        is_elf: matches!(resolved.platform.triplet.os, Os::Linux | Os::FreeBsd),
         msvc_machine: resolved
             .platform
             .triplet

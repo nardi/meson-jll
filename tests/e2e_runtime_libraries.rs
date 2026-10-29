@@ -16,7 +16,9 @@
 //!
 //! The installed `libdir` must hold exactly the three libraries the loader
 //! asks for, under the names it asks for them, and on Linux the installed
-//! demo must run from there alone.
+//! demo must run from there alone. The demo must also run from the build
+//! tree without any linker flag in the consumer, although the first library
+//! needs the nested one from a directory its own run path does not cover.
 //!
 //! Ignored by default because it needs Meson, Ninja, and a C compiler on
 //! `PATH`. Run explicitly with:
@@ -48,14 +50,14 @@ fn shared_library_name(base: &str, version: Option<&str>) -> String {
 
 /// Compiles `source` into a shared library in `directory` whose soname (or
 /// install name on macOS) is its own file name, and returns that file name.
-/// `link_against` names libraries in the same directory to link, by the
-/// unversioned development name.
+/// `link_against` names libraries to link by their unversioned development
+/// name, each with the directory that holds it.
 fn compile_shared_library(
     directory: &Path,
     base: &str,
     version: Option<&str>,
     source: &str,
-    link_against: &[&str],
+    link_against: &[(&Path, &str)],
 ) -> String {
     let file_name = shared_library_name(base, version);
     let source_path = directory.join(format!("{base}.c"));
@@ -78,8 +80,8 @@ fn compile_shared_library(
         ]);
     }
     command.arg(&source_path).arg("-o").arg(&file_name);
-    for library in link_against {
-        command.arg(format!("-L{}", directory.display()));
+    for (library_directory, library) in link_against {
+        command.arg(format!("-L{}", library_directory.display()));
         command.arg(format!("-l{library}"));
     }
     let output = command
@@ -140,12 +142,23 @@ fn installs_the_libraries_the_loader_asks_for() {
     let hidden_development = shared_library_name("hidden", None);
     symlink(&hidden, libraries_dir.join(&hidden_development)).unwrap();
 
+    let nested = compile_shared_library(
+        &nested_dir,
+        "nested",
+        None,
+        "int nested_value(void) { return 3; }\n",
+        &[],
+    );
+
+    // The example library needs the nested one, which sits in a directory
+    // its own run path does not cover, as a library of another JLL would.
     let example = compile_shared_library(
         &libraries_dir,
         "example",
         Some("3"),
-        "int hidden_value(void);\nint example_value(void) { return hidden_value(); }\n",
-        &["hidden"],
+        "int hidden_value(void);\nint nested_value(void);\n\
+         int example_value(void) { return hidden_value() + nested_value(); }\n",
+        &[(&libraries_dir, "hidden"), (&nested_dir, "nested")],
     );
     let example_development = shared_library_name("example", None);
     symlink(&example, libraries_dir.join(&example_development)).unwrap();
@@ -155,13 +168,6 @@ fn installs_the_libraries_the_loader_asks_for() {
         "unused",
         None,
         "int unused_value(void) { return 0; }\n",
-        &[],
-    );
-    let nested = compile_shared_library(
-        &nested_dir,
-        "nested",
-        None,
-        "int nested_value(void) { return 3; }\n",
         &[],
     );
 
@@ -284,10 +290,7 @@ end
     fs::write(
         consumer_dir.join("demo.c"),
         "int example_value(void);\n\
-         int nested_value(void);\n\
-         int main(void) {\n\
-         \x20   return example_value() == 7 && nested_value() == 3 ? 0 : 1;\n\
-         }\n",
+         int main(void) { return example_value() == 10 ? 0 : 1; }\n",
     )
     .unwrap();
 
@@ -300,6 +303,24 @@ end
         .output()
         .expect("could not run meson setup (is meson on PATH?)");
     assert_success(&setup, "meson setup");
+
+    // On Linux the demo also has to run straight from the build tree, with
+    // no linker flag of its own. It calls only the example library, which
+    // needs one from a directory its run path does not cover, so the loader
+    // can only find that one if the demo records it as needed itself.
+    if cfg!(target_os = "linux") {
+        let compile = Command::new("meson")
+            .args(["compile", "-C"])
+            .arg(&build_dir)
+            .output()
+            .expect("could not run meson compile");
+        assert_success(&compile, "meson compile");
+        let run = Command::new(build_dir.join("demo"))
+            .env_remove("LD_LIBRARY_PATH")
+            .output()
+            .expect("could not run the demo from the build tree");
+        assert_success(&run, "the demo run from the build tree");
+    }
 
     let install = Command::new("meson")
         .args(["install", "-C"])

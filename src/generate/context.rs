@@ -226,6 +226,12 @@ pub struct TripletOverlayContext<'a> {
     /// out to be MSVC and no native `.lib` already exists. Irrelevant, and
     /// unused by the template, on every other platform.
     pub is_windows: bool,
+    /// Whether this platform links ELF shared libraries, which is Linux and
+    /// FreeBSD. The overlay adds `--no-as-needed` to the dependency there, so
+    /// a consumer records every JLL library as needed and the dynamic loader
+    /// can satisfy the requests of the JLL libraries for each other by
+    /// soname (see the comment in `triplet_overlay.jinja`).
+    pub is_elf: bool,
     /// The value MSVC's `lib.exe /machine:` flag expects on this
     /// architecture (see [`crate::jll::triplet::Arch::msvc_machine`]).
     /// Only meaningful when `is_windows` is set.
