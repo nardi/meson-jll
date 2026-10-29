@@ -9,8 +9,7 @@
 use std::path::Path;
 
 use crate::error::Result;
-use crate::install::lock_path_for;
-use crate::lock::LockFile;
+use crate::install::read_lock;
 
 /// One JLL package already recorded in a project's lockfile.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,8 +21,7 @@ pub struct InstalledPackage {
 /// Reads every package recorded in `subprojects_dir`'s lockfile, sorted by
 /// name. Returns an empty list if no lockfile exists yet.
 pub fn installed_packages(subprojects_dir: &Path) -> Result<Vec<InstalledPackage>> {
-    let lock_path = lock_path_for(subprojects_dir);
-    let lock = LockFile::read(&lock_path)?;
+    let lock = read_lock(subprojects_dir)?;
 
     let mut packages: Vec<InstalledPackage> = lock
         .packages
@@ -40,14 +38,12 @@ pub fn installed_packages(subprojects_dir: &Path) -> Result<Vec<InstalledPackage
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lock::LockedPackage;
+    use crate::install::lock_path_for;
+    use crate::lock::{LockFile, LockedPackage};
 
     #[test]
     fn reads_packages_from_the_lockfile_sorted_by_name() {
         let directory = tempfile::tempdir().unwrap();
-        // The lockfile lives in the project root, the parent of the
-        // subprojects directory, so the test writes it there and points
-        // `installed_packages` at a `subprojects` child of the same root.
         let subprojects_dir = directory.path().join("subprojects");
         let lock_path = lock_path_for(&subprojects_dir);
 

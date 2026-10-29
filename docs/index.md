@@ -117,7 +117,8 @@ updated SuiteSparse to 7.13.0+0
 `sync` regenerates every wrap straight from the committed lockfile, without
 resolving anything or contacting the registry for versions. It is the
 command to run after a fresh checkout of a project that commits its
-`meson-jll.lock` but not the generated wraps (see "Version control" below):
+`meson-jll.lock.wrap` but not the generated wraps (see "Version control"
+below):
 
 ```shell
 $ meson-jll sync
@@ -127,38 +128,49 @@ Synced libblastrampoline 5.11.2+2
 
 ## Version control
 
-`meson-jll` writes into two places: `meson-jll.lock` in the project root,
-and a set of files under `subprojects/`. On top of those, `meson setup`
-later adds more files under `subprojects/` of its own (downloaded archives
-and the source trees it extracts from them). There are two suggested
-approaches to include this in version control.
+`meson-jll` writes everything under `subprojects/`. That includes the
+lockfile `meson-jll.lock.wrap`, and the wraps and `packagefiles/` overlays
+generated for each JLL. On top of those, `meson setup` later adds more files
+under `subprojects/` of its own (downloaded archives and the source trees it
+extracts from them). There are two suggested approaches to include this in
+version control.
 
-In either case, you should always commit `meson-jll.lock`. It is the record
-of exactly which JLL versions the project resolved to, and everything else
-can be regenerated from it.
+In either case, you should always commit `meson-jll.lock.wrap`. It is the
+record of exactly which JLL versions the project resolved to, and everything
+else can be regenerated from it.
 
-**Approach one: commit the lockfile only.** Ignore the whole `subprojects/`
-directory. A collaborator, or a CI job, runs `meson-jll sync` after checking
-out, which regenerates every wrap from the lockfile before building. This
-keeps the repository small and free of generated files, at the cost of one
-extra command before the first build.
+A project from an earlier version has its lock in `meson-jll.lock` in the
+project root instead. The commands read that file until the next `install`
+or `update` moves the lock into `meson-jll.lock.wrap` and deletes it, so
+commit that change.
+
+**Approach one: commit the lockfile only.** Ignore everything in
+`subprojects/` except the lockfile. A collaborator, or a CI job, runs
+`meson-jll sync` after checking out, which regenerates every wrap from the
+lockfile before building. This keeps the repository small and free of
+generated files, at the cost of one extra command before the first build.
 
 ```gitignore
-# Commit meson-jll.lock (in the project root), regenerate the rest.
-subprojects/
+# Commit the lockfile, regenerate the rest.
+subprojects/*
+!subprojects/meson-jll.lock.wrap
 ```
 
 The extra command can be folded into `meson setup` itself, so a collaborator
-never has to remember it: call `meson-jll sync` from a `run_command()` at the
-top of the root `meson.build`, before anything reads from `subprojects/`.
+never has to remember it. Look up `meson-jll` with `find_program()` and call
+`sync` from a `run_command()` at the top of the root `meson.build`, before
+anything reads from `subprojects/`.
 
 ```meson
-run_command('meson-jll', 'sync', check: true)
+meson_jll = find_program('meson-jll')
+run_command(meson_jll, 'sync', check: true)
 ```
 
 This makes `meson setup` self-sufficient straight after a fresh checkout, at
-the cost of requiring `meson-jll` itself to be on `PATH` wherever the project
-is configured, including CI.
+the cost of requiring `meson-jll` itself to be on `PATH` wherever the
+project is configured, including CI. `find_program()` checks for that first,
+so a machine without `meson-jll` fails at this line with a message naming
+the missing program, instead of with an error from the `sync` call.
 
 **Approach two: commit the generated wraps too.** Commit the `.wrap` files
 and the `packagefiles/` overlay directory `meson-jll` generates, so the
@@ -177,7 +189,7 @@ The `subprojects/*/` line ignores every extracted source directory (each
 platform's tarball is unpacked into its own directory there), while the
 following line keeps the `packagefiles/` overlays `meson-jll` generated.
 The individual `.wrap` files are not directories, so they are committed
-either way.
+either way, `meson-jll.lock.wrap` included.
 
 ## Common issues
 
@@ -203,4 +215,4 @@ consumer that loads the libraries from Python can call `lbt_forward` on
 - [Internals](crate::internals): how the generated wrap set is shaped, the
   three-step generation process, and how versions are resolved.
 - [Lockfile format](crate::lockfile): the formal specification of
-  `meson-jll.lock`.
+  `meson-jll.lock.wrap`.

@@ -34,7 +34,7 @@ pub mod internals {
     #![doc = include_str!("../docs/internals.md")]
 }
 
-/// The formal specification of the `subprojects/meson-jll.lock` format.
+/// The formal specification of the `subprojects/meson-jll.lock.wrap` format.
 ///
 /// This module holds no code. It exists only to render the lockfile format
 /// page in the generated documentation. See [`crate::lock`] for the code

@@ -19,28 +19,62 @@ use crate::registry;
 use crate::resolve::{self, GithubCatalog, ResolvedPackage, DEFAULT_MAX_ITERATIONS};
 use crate::source::{CustomSource, GithubSource};
 
-/// The lockfile's file name. It lives in the project root (the parent of
-/// the subprojects directory), next to `meson.build`, not inside
-/// `subprojects/` itself: it describes the project's whole JLL dependency
-/// set, which is project-level information a user commits and edits
-/// alongside their build definition, rather than one of the generated wrap
-/// files under `subprojects/`. See `crate::lockfile` for the format.
-pub const LOCK_FILE_NAME: &str = "meson-jll.lock";
+/// The lockfile's file name. It is a wrap file inside the subprojects
+/// directory, because Meson reads that file before `meson-jll` has run and
+/// ignores the lock sections inside it. See `crate::lockfile` for the format.
+pub const LOCK_FILE_NAME: &str = "meson-jll.lock.wrap";
 
 /// The lockfile's path, given a project's subprojects directory. This is
-/// the one place the "lockfile lives in the project root" rule is encoded,
-/// so every command reads and writes the same location. A `subprojects_dir`
-/// with no parent component (a bare relative `subprojects`) resolves to the
-/// current directory, so the lockfile lands next to it either way.
+/// the one place the "lockfile lives in the subprojects directory" rule is
+/// encoded, so every command reads and writes the same location.
 pub fn lock_path_for(subprojects_dir: &Path) -> std::path::PathBuf {
-    // A bare relative `subprojects` has a parent of `""` (the empty path),
-    // not `None`, and joining onto `""` would drop the leading directory,
-    // so an empty parent is treated as the current directory `.`.
+    subprojects_dir.join(LOCK_FILE_NAME)
+}
+
+/// The file name of the lockfile that earlier versions wrote, in the project
+/// root. See [`read_lock`].
+pub const LEGACY_LOCK_FILE_NAME: &str = "meson-jll.lock";
+
+/// The path of the lockfile that earlier versions wrote, given a project's
+/// subprojects directory. A bare relative `subprojects` has a parent of `""`
+/// (the empty path), which is the current directory.
+fn legacy_lock_path_for(subprojects_dir: &Path) -> std::path::PathBuf {
     let project_root = match subprojects_dir.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
     };
-    project_root.join(LOCK_FILE_NAME)
+    project_root.join(LEGACY_LOCK_FILE_NAME)
+}
+
+/// Reads the lock of the project whose subprojects directory is
+/// `subprojects_dir`.
+///
+/// Earlier versions kept the lock in a TOML file of its own, `meson-jll.lock`
+/// in the project root. That file is read when the wrap file holds no lock,
+/// so a project does not lose its pinned versions by upgrading. It is
+/// replaced the next time the lock is written.
+pub fn read_lock(subprojects_dir: &Path) -> Result<LockFile> {
+    let lock = LockFile::read(&lock_path_for(subprojects_dir))?;
+    if !lock.is_empty() {
+        return Ok(lock);
+    }
+    LockFile::read_legacy(&legacy_lock_path_for(subprojects_dir))
+}
+
+/// Writes the lock into the wrap file of `subprojects_dir`, and removes the
+/// lockfile of earlier versions if the project still has one, since the wrap
+/// file holds the same information from now on.
+fn write_lock(subprojects_dir: &Path, lock: &LockFile) -> Result<()> {
+    lock.write(&lock_path_for(subprojects_dir))?;
+    let legacy_path = legacy_lock_path_for(subprojects_dir);
+    match std::fs::remove_file(&legacy_path) {
+        Ok(()) => Ok(()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(crate::error::Error::WriteFile {
+            path: legacy_path,
+            source,
+        }),
+    }
 }
 
 /// A JLL's Windows binaries are MinGW-w64 built, and depend at runtime on
@@ -94,8 +128,7 @@ pub fn install(
     } else {
         registry::canonical_bare_name(name)?
     };
-    let lock_path = lock_path_for(subprojects_dir);
-    let mut lock = LockFile::read(&lock_path)?;
+    let mut lock = read_lock(subprojects_dir)?;
 
     // Every package's version before this call, used below to skip
     // regenerating a wrap set that has not actually changed. Without this,
@@ -207,7 +240,6 @@ pub fn install(
         &resolved,
         lock.roots,
         WriteWrapsContext {
-            lock_path: &lock_path,
             subprojects_dir,
             force,
             already_generated: &already_generated,
@@ -243,8 +275,7 @@ fn update_all(
     force: bool,
     on_progress: &mut impl FnMut(Progress),
 ) -> Result<Vec<(String, String)>> {
-    let lock_path = lock_path_for(subprojects_dir);
-    let mut lock = LockFile::read(&lock_path)?;
+    let mut lock = read_lock(subprojects_dir)?;
     if lock.roots.is_empty() {
         return Ok(Vec::new());
     }
@@ -280,7 +311,6 @@ fn update_all(
         &resolved,
         lock.roots,
         WriteWrapsContext {
-            lock_path: &lock_path,
             subprojects_dir,
             force,
             already_generated: &HashSet::new(),
@@ -305,8 +335,7 @@ pub fn install_locked(
     force: bool,
     on_progress: &mut impl FnMut(Progress),
 ) -> Result<Vec<(String, String)>> {
-    let lock_path = lock_path_for(subprojects_dir);
-    let lock = LockFile::read(&lock_path)?;
+    let lock = read_lock(subprojects_dir)?;
 
     let mut packages: Vec<&LockedPackage> = lock.packages.iter().collect();
     packages.sort_by(|left, right| left.name.cmp(&right.name));
@@ -325,7 +354,6 @@ pub fn install_locked(
 /// its callers, grouped so the function itself does not need one parameter
 /// per field.
 struct WriteWrapsContext<'a> {
-    lock_path: &'a Path,
     subprojects_dir: &'a Path,
     force: bool,
     /// Skips names whose wrap set a caller already wrote (used for a
@@ -355,7 +383,6 @@ fn write_wraps_and_lock(
     on_progress: &mut impl FnMut(Progress),
 ) -> Result<Vec<(String, String)>> {
     let WriteWrapsContext {
-        lock_path,
         subprojects_dir,
         force,
         already_generated,
@@ -388,11 +415,13 @@ fn write_wraps_and_lock(
             dependencies: package.dependencies.clone(),
         })
         .collect();
-    LockFile {
-        roots,
-        packages: locked_packages,
-    }
-    .write(lock_path)?;
+    write_lock(
+        subprojects_dir,
+        &LockFile {
+            roots,
+            packages: locked_packages,
+        },
+    )?;
 
     Ok(installed)
 }
@@ -405,4 +434,58 @@ fn load_at_locked_version(name: &str, version: &str) -> Result<jll::JllPackage> 
     let git_ref = format!("{name}-v{version}");
     let source = GithubSource::new(owner, repo, git_ref);
     jll::load(&source)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    const LEGACY_LOCK: &str = "version = 1\n\n[roots]\nExampleThing = \"*\"\n\n\
+                               [[package]]\nname = \"ExampleThing\"\nversion = \"1.2.3+0\"\n\
+                               dependencies = []\n";
+
+    #[test]
+    fn a_legacy_lock_is_read_when_the_wrap_has_none() {
+        let project = tempfile::tempdir().unwrap();
+        let subprojects_dir = project.path().join("subprojects");
+        fs::write(project.path().join("meson-jll.lock"), LEGACY_LOCK).unwrap();
+
+        let lock = read_lock(&subprojects_dir).unwrap();
+        assert_eq!(lock.packages.len(), 1);
+        assert_eq!(lock.roots["ExampleThing"], "*");
+    }
+
+    #[test]
+    fn the_lock_of_the_wrap_wins_over_a_legacy_lock() {
+        let project = tempfile::tempdir().unwrap();
+        let subprojects_dir = project.path().join("subprojects");
+        fs::write(project.path().join("meson-jll.lock"), LEGACY_LOCK).unwrap();
+        LockFile {
+            roots: [("OtherThing".to_string(), "*".to_string())].into(),
+            packages: vec![],
+        }
+        .write(&lock_path_for(&subprojects_dir))
+        .unwrap();
+
+        let lock = read_lock(&subprojects_dir).unwrap();
+        assert!(lock.roots.contains_key("OtherThing"));
+        assert!(!lock.roots.contains_key("ExampleThing"));
+    }
+
+    #[test]
+    fn writing_the_lock_replaces_a_legacy_lock() {
+        let project = tempfile::tempdir().unwrap();
+        let subprojects_dir = project.path().join("subprojects");
+        let legacy_path = project.path().join("meson-jll.lock");
+        fs::write(&legacy_path, LEGACY_LOCK).unwrap();
+
+        let lock = read_lock(&subprojects_dir).unwrap();
+        write_lock(&subprojects_dir, &lock).unwrap();
+
+        assert!(!legacy_path.exists());
+        let migrated = LockFile::read(&lock_path_for(&subprojects_dir)).unwrap();
+        assert_eq!(migrated.packages, lock.packages);
+        assert_eq!(read_lock(&subprojects_dir).unwrap().packages, lock.packages);
+    }
 }
