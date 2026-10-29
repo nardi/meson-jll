@@ -174,16 +174,16 @@ a [`source::GithubSource`](crate::source::GithubSource) reads raw files from
 it. A `--url` argument instead produces a
 [`source::CustomSource`](crate::source::CustomSource), which reads from a
 given repository or local directory. Both implement the one small
-[`source::Source`](crate::source::Source) trait, so the rest of the pipeline
+[`source::Source`] trait, so the rest of the pipeline
 does not care which was used.
 
 ### Parse the metadata into one model
 
 [`jll::load`](crate::jll::load) reads the three files a JLL publishes and
-folds them into a single [`jll::JllPackage`](crate::jll::JllPackage). That
+folds them into a single [`jll::JllPackage`]. That
 value is a small tree of plain types, one per piece of the metadata:
 
-- [`jll::JllPackage`](crate::jll::JllPackage) is the whole package: its name,
+- [`jll::JllPackage`] is the whole package: its name,
   its version, the names of the other JLLs it depends on, and the list of
   platforms it supports. It comes from `Project.toml` together with the
   entries below.
@@ -278,7 +278,7 @@ implementation, [`resolve::GithubCatalog`](crate::resolve::GithubCatalog),
 answers both from GitHub: release tags for the first, and each tag's
 `Project.toml` for the second. Kept behind a trait and used through a
 generic parameter rather than a trait object, matching
-[`source::Source`](crate::source::Source), so the solver itself is unit
+[`source::Source`], so the solver itself is unit
 tested against an in-memory catalog with no network involved.
 
 As a small illustration of the compat parsing this relies on, a bare version

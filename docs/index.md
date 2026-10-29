@@ -20,8 +20,8 @@ build system supports, which includes C, C++, C#, D, Fortran, Java, Python
 and Rust.
 
 For worked examples of using a JLL from a real project, see the
-[examples](crate::examples) page. For an explanation of what the generated
-files are and how they are produced, see the [internals](crate::internals)
+[examples] page. For an explanation of what the generated
+files are and how they are produced, see the [internals]
 page.
 
 [jll]: https://docs.binarybuilder.org/stable/jll/
@@ -59,7 +59,7 @@ executable('demo', 'demo.c', dependencies: suitesparse)
 
 `meson setup` then downloads only the one tarball that matches the machine
 it runs on, no matter how many platforms the JLL supports. The
-[examples](crate::examples) page walks through this end to end.
+[examples] page walks through this end to end.
 
 ## Commands
 
@@ -203,7 +203,7 @@ first `[meson-jll]` section with the lines of a newer release's file.
 Releases include binaries for Linux (x86_64 and aarch64, statically linked
 so that any distribution works), macOS (x86_64 and aarch64), and Windows
 (x86_64). On any other platform `find_program()` fails with an error that
-names the platform. See [internals](crate::internals) for how the wrap is
+names the platform. See [internals] for how the wrap is
 put together.
 
 **Approach two: commit the generated wraps too.** Commit the `.wrap` files
