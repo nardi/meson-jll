@@ -1,0 +1,3 @@
+# Generated files must not depend on the platform the templates were checked
+# out on, so every text file uses LF line endings.
+* text=auto eol=lf
