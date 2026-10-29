@@ -629,7 +629,20 @@ fn write_triplet_overlay(
 
     let overlay_dir = subprojects_dir.join("packagefiles").join(&project_name);
 
-    let mut jll_dependencies: Vec<&str> = package.dependencies.iter().map(String::as_str).collect();
+    // Only the dependencies that this platform's wrapper loads become
+    // dependencies of its overlay, since a dependency without a build for the
+    // platform would stop the configuration.
+    let mut jll_dependencies: Vec<&str> = package
+        .dependencies
+        .iter()
+        .filter(|name| {
+            resolved
+                .used_jlls
+                .as_ref()
+                .is_none_or(|used| used.contains(name))
+        })
+        .map(String::as_str)
+        .collect();
     if is_windows
         && package.name != crate::install::WINDOWS_RUNTIME_SHIM_PACKAGE
         && !jll_dependencies.contains(&crate::install::WINDOWS_RUNTIME_SHIM_PACKAGE)
@@ -873,6 +886,57 @@ mod tests {
             },
             library_products: Vec::new(),
             executable_products: Vec::new(),
+            used_jlls: None,
+        }
+    }
+
+    #[test]
+    fn an_overlay_depends_only_on_the_jlls_its_wrapper_loads() {
+        let linux = Triplet {
+            arch: Arch::X86_64,
+            os: Os::Linux,
+            libc: Some(Libc::Glibc),
+            call_abi: None,
+            cxxstring_abi: None,
+            libgfortran_version: None,
+        };
+        let darwin = Triplet {
+            arch: Arch::Aarch64,
+            os: Os::MacOs,
+            libc: None,
+            call_abi: None,
+            cxxstring_abi: None,
+            libgfortran_version: None,
+        };
+        let package = JllPackage {
+            name: "Example".to_string(),
+            version: "1.0.0+0".to_string(),
+            dependencies: vec!["Everywhere".to_string(), "LinuxOnly".to_string()],
+            platforms: Vec::new(),
+        };
+        let directory = tempfile::tempdir().unwrap();
+        for (triplet, used) in [
+            (linux, vec!["Everywhere", "LinuxOnly"]),
+            (darwin, vec!["Everywhere"]),
+        ] {
+            let mut platform = resolved(triplet);
+            platform.used_jlls = Some(used.into_iter().map(str::to_string).collect());
+            let identifier = platform.platform.triplet.identifier();
+            write_triplet_overlay(&package, &platform, "example_dep", directory.path(), false)
+                .unwrap();
+            let overlay = fs::read_to_string(
+                directory
+                    .path()
+                    .join("packagefiles")
+                    .join(format!("Example-{identifier}"))
+                    .join("meson.build"),
+            )
+            .unwrap();
+            assert!(overlay.contains("dependency('Everywhere_jll')"));
+            assert_eq!(
+                overlay.contains("dependency('LinuxOnly_jll')"),
+                identifier.contains("linux")
+            );
         }
     }
 
