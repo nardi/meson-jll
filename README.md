@@ -18,7 +18,20 @@ of JLL binaries easily usable by projects in any language that the Meson
 build system supports, which includes C, C++, C#, D, Fortran, Java, Python
 and Rust.
 
-Example usage:
+## Installation
+
+Every [release](https://github.com/nardi/meson-jll/releases) attaches a
+`meson-jll` archive for Linux, macOS and Windows. Download the one for your
+platform and put the binary on `PATH`. To build from source instead, run:
+
+```shell
+$ cargo install --locked --git https://github.com/nardi/meson-jll
+```
+
+A project can also let Meson fetch the binary itself, so that nobody has to
+install it. The documentation describes how.
+
+## Example usage
 
 ```shell
 $ meson-jll install SuiteSparse
