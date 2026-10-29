@@ -21,38 +21,7 @@ use meson_jll::jll::triplet::{Arch, Libc, Os, Triplet};
 use sha2::{Digest, Sha256};
 
 mod common;
-use common::assert_success;
-
-/// The Julia-side platform selectors for the machine running this test, in
-/// the vocabulary `Artifacts.toml` itself uses (`x86_64`/`aarch64`,
-/// `linux`/`macos`/`windows`, `glibc`). Kept as plain strings independent
-/// of the crate's own `Os`/`Arch` parsing, so this test exercises that
-/// parsing rather than assuming it.
-struct HostPlatform {
-    julia_arch: &'static str,
-    julia_os: &'static str,
-    julia_libc: Option<&'static str>,
-}
-
-fn host_platform() -> HostPlatform {
-    let julia_arch = match std::env::consts::ARCH {
-        "x86_64" => "x86_64",
-        "aarch64" => "aarch64",
-        other => panic!("e2e_meson does not know the Julia arch string for {other}"),
-    };
-    let julia_os = match std::env::consts::OS {
-        "linux" => "linux",
-        "macos" => "macos",
-        "windows" => "windows",
-        other => panic!("e2e_meson does not know the Julia os string for {other}"),
-    };
-    let julia_libc = (julia_os == "linux").then_some("glibc");
-    HostPlatform {
-        julia_arch,
-        julia_os,
-        julia_libc,
-    }
-}
+use common::{assert_success, host_platform};
 
 /// Compiles `example.c` into a real, minimal static library for the host,
 /// using whatever compiler is already on PATH (`cl` on Windows, `cc`

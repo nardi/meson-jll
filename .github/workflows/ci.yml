@@ -58,7 +58,7 @@ jobs:
       # find_program('meson-jll') fetches and runs it. See
       # tests/e2e_release_wrap.rs.
       - name: Run the real Meson end-to-end tests
-        run: cargo test --test e2e_meson --test e2e_release_wrap -- --ignored
+        run: cargo test --test e2e_meson --test e2e_release_wrap --test e2e_runtime_libraries -- --ignored
 
   # The release ships statically linked musl binaries for Linux, which need
   # musl-gcc to build. Building one here catches a break before a release.
