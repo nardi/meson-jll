@@ -73,6 +73,23 @@ pub fn parse_library_products(source: &str) -> Vec<LibraryProduct> {
         .collect()
 }
 
+/// Scans a wrapper script for the JLL packages it loads with `using`, as bare
+/// package names without the `_jll` suffix.
+///
+/// A JLL lists all of its dependencies in `Project.toml`, but the wrapper of
+/// each platform only loads the ones that platform needs. The Hwloc wrapper
+/// for Linux loads `Xorg_libpciaccess_jll`, for example, and the wrappers for
+/// macOS and Windows do not.
+pub fn parse_used_jlls(source: &str) -> Vec<String> {
+    source
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("using "))
+        .flat_map(|names| names.split(','))
+        .filter_map(|name| name.trim().strip_suffix("_jll"))
+        .map(str::to_string)
+        .collect()
+}
+
 /// Repeatedly applies `parser` to `input`, skipping forward to the next
 /// match each time it fails, until no more matches remain.
 fn scan_all<'a, T>(mut input: &'a str, parser: impl Fn(&'a str) -> IResult<&'a str, T>) -> Vec<T> {
@@ -213,6 +230,16 @@ fn init_executable_product(input: &str) -> IResult<&str, (String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn used_jlls_lists_the_packages_a_wrapper_loads() {
+        let source = "using XML2_jll\nusing Xorg_libpciaccess_jll, Zlib_jll\nusing Libdl\n";
+        assert_eq!(
+            parse_used_jlls(source),
+            vec!["XML2", "Xorg_libpciaccess", "Zlib"]
+        );
+        assert!(parse_used_jlls("export libhwloc\n").is_empty());
+    }
 
     const EXAMPLE: &str = r#"
         using OtherThing_jll

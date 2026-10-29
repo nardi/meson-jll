@@ -48,6 +48,10 @@ pub struct ResolvedPlatform {
     /// and installing it anyway would bloat something like a Python wheel
     /// for no reason.
     pub executable_products: Vec<ExecutableProduct>,
+    /// The JLL dependencies that this platform's wrapper loads, or `None`
+    /// when no wrapper could be read, in which case every dependency of the
+    /// package counts as used.
+    pub used_jlls: Option<Vec<String>>,
 }
 
 /// Loads a JLL package's metadata from `source`, which must already be
@@ -84,10 +88,12 @@ pub fn load<S: Source>(source: &S) -> Result<JllPackage> {
                 .as_deref()
                 .map(wrappers::parse_executable_products)
                 .unwrap_or_default();
+            let used_jlls = wrapper_text.as_deref().map(wrappers::parse_used_jlls);
             ResolvedPlatform {
                 platform,
                 library_products,
                 executable_products,
+                used_jlls,
             }
         })
         .collect();
