@@ -140,6 +140,19 @@ Synced SuiteSparse 7.12.1+0
 Synced libblastrampoline 5.11.2+2
 ```
 
+### `self-update`
+
+`self-update [<version>]` moves a project to another release of `meson-jll`.
+It replaces the wrap sections at the top of `meson-jll.lock.wrap` with those
+of the release, which is the latest one when no version is given, and keeps
+the lock. It does not touch the `meson-jll` that runs it, and a `meson-jll`
+on `PATH` still wins over the pinned one (see "Version control" below):
+
+```shell
+$ meson-jll self-update
+Updated meson-jll from 0.1.0 to 0.2.0 in subprojects/meson-jll.lock.wrap
+```
+
 ## Version control
 
 `meson-jll` writes everything under `subprojects/`. That includes the
@@ -195,16 +208,15 @@ A later `install` or `update` keeps them. The `MESON_JLL_WRAP` environment
 variable names a URL or a path to read them from instead, for example a
 mirror. If they cannot be read, because the build is not a release or there
 is no network, the file starts with a placeholder wrap section, and the
-project has no fallback until the sections are added.
+project has no fallback until `meson-jll self-update` adds the sections.
 
 The sections name the version of the release they came from, and that is the
-`meson-jll` version Meson downloads. To upgrade, replace the lines above the
-first `[meson-jll]` section with the lines of a newer release's file.
+`meson-jll` version Meson downloads. To upgrade, run `meson-jll
+self-update`, or `meson-jll self-update 0.2.0` for a specific release.
 Releases include binaries for Linux (x86_64 and aarch64, statically linked
 so that any distribution works), macOS (x86_64 and aarch64), and Windows
 (x86_64). On any other platform `find_program()` fails with an error that
-names the platform. See [internals] for how the wrap is
-put together.
+names the platform. See [internals] for how the wrap is put together.
 
 **Approach two: commit the generated wraps too.** Commit the `.wrap` files
 and the `packagefiles/` overlay directory `meson-jll` generates, so the
