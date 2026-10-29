@@ -354,6 +354,22 @@ impl LockFile {
     /// across regenerations that resolve to the same versions, and diffs
     /// stay minimal.
     pub fn write(&self, path: &Path) -> Result<()> {
+        self.write_starting_with(path, None)
+    }
+
+    /// Whether the file at `path` already has a section of the wrap, which
+    /// is any section that is not part of the lock.
+    pub fn has_wrap_section(path: &Path) -> Result<bool> {
+        let existing = read_if_present(path)?.unwrap_or_default();
+        Ok(split_sections(&existing)
+            .iter()
+            .any(|section| section.name.is_some_and(|name| !is_lock_section(name))))
+    }
+
+    /// Writes the lock like [`Self::write`], except that a file with no wrap
+    /// section starts with `initial_wrap` instead of the placeholder one.
+    /// `initial_wrap` is used as given and must hold no lock sections.
+    pub fn write_starting_with(&self, path: &Path, initial_wrap: Option<&str>) -> Result<()> {
         let existing = read_if_present(path)?.unwrap_or_default();
         let all_sections = split_sections(&existing);
         let has_wrap_section = all_sections
@@ -372,7 +388,7 @@ impl LockFile {
                 }
             }
         } else {
-            text.push_str(PLACEHOLDER_WRAP);
+            text.push_str(initial_wrap.unwrap_or(PLACEHOLDER_WRAP));
         }
         let mut text = text.trim_end().to_string();
         text.push_str("\n\n");
@@ -525,6 +541,44 @@ mod tests {
         let second = fs::read_to_string(&path).unwrap();
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn a_new_lockfile_can_start_with_a_given_wrap() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("meson-jll.lock.wrap");
+        let wrap = "[wrap-file]\ndirectory = meson-jll-wrap-0.1.0\n\n[provide]\nprogram_names = meson-jll\n";
+
+        sample().write_starting_with(&path, Some(wrap)).unwrap();
+
+        assert!(fs::read_to_string(&path).unwrap().starts_with(wrap));
+        assert_eq!(LockFile::read(&path).unwrap().packages, sample().packages);
+        assert!(LockFile::has_wrap_section(&path).unwrap());
+    }
+
+    #[test]
+    fn a_given_wrap_does_not_replace_the_wrap_already_there() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("meson-jll.lock.wrap");
+        let existing = "[wrap-file]\ndirectory = mine\n";
+        fs::write(&path, existing).unwrap();
+
+        sample()
+            .write_starting_with(&path, Some("[wrap-file]\ndirectory = other\n"))
+            .unwrap();
+
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with(existing));
+        assert!(!text.contains("other"));
+    }
+
+    #[test]
+    fn a_missing_lockfile_has_no_wrap_section() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("meson-jll.lock.wrap");
+        assert!(!LockFile::has_wrap_section(&path).unwrap());
+        fs::write(&path, "[meson-jll]\nformat = 1\n").unwrap();
+        assert!(!LockFile::has_wrap_section(&path).unwrap());
     }
 
     #[test]

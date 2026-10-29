@@ -44,9 +44,11 @@ version = 5.11.2+2
 
 Meson requires the first section of every wrap file to be a wrap section,
 even when nothing refers to that file. A new lockfile therefore starts with
-the placeholder `[wrap-file]` section shown above. A lockfile that shares
-its file with a real wrap keeps that wrap's sections instead. Everything
-outside the lock sections is outside this specification.
+the wrap sections of the `meson-jll` release that writes it, which also let
+Meson fetch the tool itself. The placeholder `[wrap-file]` section shown
+above is only used when those cannot be read. A lockfile that already has a
+wrap keeps that wrap's sections. Everything outside the lock sections is
+outside this specification.
 
 ## The `[meson-jll]` section
 

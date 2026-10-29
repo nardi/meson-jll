@@ -53,5 +53,27 @@ jobs:
       # Compiles a real tiny library, generates a wrap set from it with the
       # meson-jll binary this job just built, and runs actual meson setup
       # and meson compile against it. See tests/e2e_meson.rs.
-      - name: Run the real Meson end-to-end test
-        run: cargo test --test e2e_meson -- --ignored
+      #
+      # Also packages that binary the way a release does and checks that
+      # find_program('meson-jll') fetches and runs it. See
+      # tests/e2e_release_wrap.rs.
+      - name: Run the real Meson end-to-end tests
+        run: cargo test --test e2e_meson --test e2e_release_wrap -- --ignored
+
+  # The release ships statically linked musl binaries for Linux, which need
+  # musl-gcc to build. Building one here catches a break before a release.
+  musl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install musl-gcc
+        run: sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --target x86_64-unknown-linux-musl

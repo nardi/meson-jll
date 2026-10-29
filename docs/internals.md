@@ -179,3 +179,25 @@ installing with no version already means "take the latest available". A
 bare `update`, with no name, refreshes every root at once with no pins at
 all. See [`crate::lockfile`] for the `dependencies` edges this closure is
 computed from.
+
+## The wrap that fetches `meson-jll`
+
+The `meson-jll.lock.wrap` file attached to a release follows the same
+pattern as a JLL's wrap set, for the same reason. A wrap can name one source
+archive, and a release has one binary per platform. The file points at a
+small archive of wraps, `meson-jll-wrap.tar.gz`, and declares `meson-jll` as
+a program it provides, which is what lets `find_program('meson-jll')` fall
+back to it. That archive holds:
+
+- A `meson.build` that maps `build_machine` to a platform. It looks at the
+  build machine and not the host machine, because the tool runs while Meson
+  configures the project, even in a cross build.
+- One wrap per platform, pointing at that platform's release archive with
+  its hash.
+- One overlay `meson.build` per platform, which calls
+  `meson.override_find_program()` on the extracted binary.
+
+Only the binary for the matching platform is downloaded. The Linux binaries
+are linked statically against musl, so the selector does not need to tell
+glibc and musl apart. `scripts/release_wrap.py` writes all of this during a
+release, and `tests/e2e_release_wrap.rs` runs the result through Meson.

@@ -29,23 +29,33 @@ jobs:
 
       # Gates the release: a wrap set that generates fine but does not
       # actually work with Meson must not get published. See
-      # tests/e2e_meson.rs.
-      - name: Run the real Meson end-to-end test
-        run: cargo test --test e2e_meson -- --ignored
+      # tests/e2e_meson.rs and tests/e2e_release_wrap.rs.
+      - name: Run the real Meson end-to-end tests
+        run: cargo test --test e2e_meson --test e2e_release_wrap -- --ignored
 
   build:
     needs: e2e
     strategy:
       matrix:
         include:
+          # Linux binaries are linked statically against musl, so one binary
+          # runs on any distribution. The generated wrap relies on this and
+          # does not tell glibc and musl apart.
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
+            binary: meson-jll
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            binary: meson-jll
           - os: macos-latest
             target: x86_64-apple-darwin
+            binary: meson-jll
           - os: macos-latest
             target: aarch64-apple-darwin
+            binary: meson-jll
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            binary: meson-jll.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -55,25 +65,27 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install musl-gcc
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get install -y musl-tools
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../meson-jll-${{ matrix.target }}.tar.gz meson-jll
-
-      - name: Package (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Compress-Archive -Path target/${{ matrix.target }}/release/meson-jll.exe -DestinationPath meson-jll-${{ matrix.target }}.zip
+      # The archive names and layout come from the same script that writes
+      # the wrap, so the two cannot drift apart.
+      - name: Package
+        shell: bash
+        run: python scripts/release_wrap.py package --target ${{ matrix.target }} --binary target/${{ matrix.target }}/release/${{ matrix.binary }} --output dist
 
       - uses: actions/upload-artifact@v4
         with:
           name: meson-jll-${{ matrix.target }}
-          path: meson-jll-${{ matrix.target }}.*
+          path: dist/*
 
   release:
     needs: build
@@ -81,11 +93,29 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
 
+      - name: Check that the tag matches the crate version
+        run: |
+          crate_version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if [ "v$crate_version" != "$GITHUB_REF_NAME" ]; then
+            echo "The tag $GITHUB_REF_NAME does not match the crate version $crate_version."
+            exit 1
+          fi
+
+      # Writes the wrap archive and the meson-jll.lock.wrap file a project
+      # commits to let Meson fetch the binary, with the hash of every
+      # archive built above. Must run after those archives exist.
+      - name: Write the wrap
+        run: python3 scripts/release_wrap.py wrap --version "${GITHUB_REF_NAME#v}" --repository "$GITHUB_REPOSITORY" --archives artifacts --output wrap
+
       - uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*
+          files: |
+            artifacts/*
+            wrap/*

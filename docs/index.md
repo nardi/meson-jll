@@ -30,6 +30,20 @@ page.
 [suitesparse]: https://github.com/JuliaBinaryWrappers/SuiteSparse_jll.jl
 [wrap]: https://mesonbuild.com/Wrap-dependency-system-manual.html
 
+## Installation
+
+Every [release](https://github.com/nardi/meson-jll/releases) includes a
+prebuilt `meson-jll` archive for each supported platform. Download the one
+for your platform and put the binary on `PATH`. To build from source
+instead, run:
+
+```shell
+$ cargo install --locked --git https://github.com/nardi/meson-jll
+```
+
+A project that wants no installation step at all can let Meson fetch the
+binary itself, as described under "Version control" below.
+
 ## Getting started
 
 Generate a wrap set for a JLL, then use it like any other Meson dependency:
@@ -166,11 +180,31 @@ meson_jll = find_program('meson-jll')
 run_command(meson_jll, 'sync', check: true)
 ```
 
-This makes `meson setup` self-sufficient straight after a fresh checkout, at
-the cost of requiring `meson-jll` itself to be on `PATH` wherever the
-project is configured, including CI. `find_program()` checks for that first,
-so a machine without `meson-jll` fails at this line with a message naming
-the missing program, instead of with an error from the `sync` call.
+This makes `meson setup` self-sufficient straight after a fresh checkout.
+`find_program()` uses the `meson-jll` on `PATH` when there is one. When
+there is not, it falls back to a prebuilt binary that Meson downloads
+through the wrap sections of `meson-jll.lock.wrap`, so the project
+configures on a machine that never installed the tool. Without those
+sections, a machine that lacks `meson-jll` stops at this line with a message
+naming the missing program.
+
+The first `meson-jll install` in a project sets those sections up. It starts
+`meson-jll.lock.wrap` from the `meson-jll.lock.wrap` file attached to the
+GitHub release of the version that is running, and writes the lock below it.
+A later `install` or `update` keeps them. The `MESON_JLL_WRAP` environment
+variable names a URL or a path to read them from instead, for example a
+mirror. If they cannot be read, because the build is not a release or there
+is no network, the file starts with a placeholder wrap section, and the
+project has no fallback until the sections are added.
+
+The sections name the version of the release they came from, and that is the
+`meson-jll` version Meson downloads. To upgrade, replace the lines above the
+first `[meson-jll]` section with the lines of a newer release's file.
+Releases include binaries for Linux (x86_64 and aarch64, statically linked
+so that any distribution works), macOS (x86_64 and aarch64), and Windows
+(x86_64). On any other platform `find_program()` fails with an error that
+names the platform. See [internals](crate::internals) for how the wrap is
+put together.
 
 **Approach two: commit the generated wraps too.** Commit the `.wrap` files
 and the `packagefiles/` overlay directory `meson-jll` generates, so the

@@ -61,11 +61,60 @@ pub fn read_lock(subprojects_dir: &Path) -> Result<LockFile> {
     LockFile::read_legacy(&legacy_lock_path_for(subprojects_dir))
 }
 
+/// The environment variable that names where the wrap sections for
+/// `meson-jll` itself are read from, a URL or a path. The default is the
+/// `meson-jll.lock.wrap` file attached to the GitHub release of this exact
+/// version, which holds the hashes of that release's binaries.
+pub const WRAP_SOURCE_VARIABLE: &str = "MESON_JLL_WRAP";
+
+/// Reads the wrap sections that let Meson fetch `meson-jll` itself, from the
+/// place [`WRAP_SOURCE_VARIABLE`] names or else the release of this version.
+///
+/// This returns `None` when they cannot be read, for example for a build that
+/// is not a release, or without a network. A project is not worse off for
+/// that than before: it only has no fallback for a machine without
+/// `meson-jll`, and can get one later by copying the file from a release.
+fn release_wrap() -> Option<String> {
+    let source = std::env::var(WRAP_SOURCE_VARIABLE).unwrap_or_else(|_| {
+        format!(
+            "{}/releases/download/v{}/meson-jll.lock.wrap",
+            env!("CARGO_PKG_REPOSITORY"),
+            env!("CARGO_PKG_VERSION")
+        )
+    });
+    let text = if source.starts_with("https://") || source.starts_with("http://") {
+        crate::source::fetch_url(&source).ok()?
+    } else {
+        std::fs::read_to_string(&source).ok()?
+    };
+    // Anything else is not a wrap that provides the program, and a file with
+    // lock sections of its own would write the lock twice.
+    let provides_program = text.contains("[wrap-file]") && text.contains("program_names");
+    let has_lock_sections = text
+        .lines()
+        .any(|line| line.trim().starts_with("[meson-jll"));
+    (provides_program && !has_lock_sections).then_some(text)
+}
+
 /// Writes the lock into the wrap file of `subprojects_dir`, and removes the
 /// lockfile of earlier versions if the project still has one, since the wrap
 /// file holds the same information from now on.
-fn write_lock(subprojects_dir: &Path, lock: &LockFile) -> Result<()> {
-    lock.write(&lock_path_for(subprojects_dir))?;
+///
+/// A file that has no wrap section yet, as in a project that never had one,
+/// starts with the sections `initial_wrap` returns, so the first write sets
+/// up the fallback that fetches `meson-jll` itself. It is only called then.
+fn write_lock(
+    subprojects_dir: &Path,
+    lock: &LockFile,
+    initial_wrap: impl FnOnce() -> Option<String>,
+) -> Result<()> {
+    let path = lock_path_for(subprojects_dir);
+    let wrap = if LockFile::has_wrap_section(&path)? {
+        None
+    } else {
+        initial_wrap()
+    };
+    lock.write_starting_with(&path, wrap.as_deref())?;
     let legacy_path = legacy_lock_path_for(subprojects_dir);
     match std::fs::remove_file(&legacy_path) {
         Ok(()) => Ok(()),
@@ -421,6 +470,7 @@ fn write_wraps_and_lock(
             roots,
             packages: locked_packages,
         },
+        release_wrap,
     )?;
 
     Ok(installed)
@@ -474,6 +524,39 @@ mod tests {
     }
 
     #[test]
+    fn the_first_write_starts_with_the_wrap_of_the_release() {
+        let project = tempfile::tempdir().unwrap();
+        let subprojects_dir = project.path().join("subprojects");
+        let wrap = "[wrap-file]\ndirectory = meson-jll-wrap-0.1.0\n";
+
+        write_lock(&subprojects_dir, &LockFile::empty(), || {
+            Some(wrap.to_string())
+        })
+        .unwrap();
+
+        let text = fs::read_to_string(lock_path_for(&subprojects_dir)).unwrap();
+        assert!(text.starts_with(wrap));
+    }
+
+    #[test]
+    fn a_later_write_keeps_the_wrap_and_does_not_fetch_another() {
+        let project = tempfile::tempdir().unwrap();
+        let subprojects_dir = project.path().join("subprojects");
+        write_lock(&subprojects_dir, &LockFile::empty(), || {
+            Some("[wrap-file]\ndirectory = first\n".to_string())
+        })
+        .unwrap();
+
+        write_lock(&subprojects_dir, &LockFile::empty(), || {
+            panic!("The wrap was fetched although the file already had one.")
+        })
+        .unwrap();
+
+        let text = fs::read_to_string(lock_path_for(&subprojects_dir)).unwrap();
+        assert!(text.starts_with("[wrap-file]\ndirectory = first"));
+    }
+
+    #[test]
     fn writing_the_lock_replaces_a_legacy_lock() {
         let project = tempfile::tempdir().unwrap();
         let subprojects_dir = project.path().join("subprojects");
@@ -481,7 +564,7 @@ mod tests {
         fs::write(&legacy_path, LEGACY_LOCK).unwrap();
 
         let lock = read_lock(&subprojects_dir).unwrap();
-        write_lock(&subprojects_dir, &lock).unwrap();
+        write_lock(&subprojects_dir, &lock, || None).unwrap();
 
         assert!(!legacy_path.exists());
         let migrated = LockFile::read(&lock_path_for(&subprojects_dir)).unwrap();
